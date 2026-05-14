@@ -23,6 +23,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
+from streamlit_autorefresh import st_autorefresh
+
+# =========================================================
+# AUTO REFRESH
+# =========================================================
+
+st_autorefresh(interval=60000, key="marketrefresh")
+
 # =========================================================
 # SAFE IMPORT
 # =========================================================
@@ -65,11 +73,11 @@ st.markdown("""
 <style>
 
 .main {
-    background-color: #0E1117;
+    background-color: #0B0F19;
 }
 
 section[data-testid="stSidebar"] {
-    background-color: #161B22;
+    background-color: #111827;
 }
 
 div[data-testid="metric-container"] {
@@ -115,6 +123,12 @@ DATA_PATH = (
     / "institutional_dataset.parquet"
 )
 
+@st.cache_data(ttl=300)
+
+def load_data():
+
+    return pd.read_parquet(DATA_PATH)
+
 if not DATA_PATH.exists():
 
     st.error("Dataset not found")
@@ -123,7 +137,7 @@ if not DATA_PATH.exists():
 
 try:
 
-    df = pd.read_parquet(DATA_PATH)
+    df = load_data()
 
 except Exception as e:
 
@@ -159,7 +173,41 @@ for col, val in fallbacks.items():
         df[col] = val
 
 # =========================================================
-# SIGNAL CREATION
+# AI ENGINE
+# =========================================================
+
+df["ai_confidence"] = (
+
+    df["institutional_score"] * 0.45
+    + df["momentum_20"] * 0.25
+    + df["adx"] * 0.20
+    + (100 - df["volatility"]) * 0.10
+
+)
+
+df["ai_confidence"] = df["ai_confidence"].clip(0, 100)
+
+df["relative_strength_rank"] = (
+
+    df["momentum_20"]
+    .rank(pct=True)
+    * 100
+)
+
+df["institutional_rank"] = (
+
+    df["institutional_score"]
+    .rank(ascending=False)
+)
+
+df["risk_score"] = (
+
+    df["volatility"] * 0.6
+    + (100 - df["adx"]) * 0.4
+)
+
+# =========================================================
+# SIGNAL ENGINE
 # =========================================================
 
 if "signal" not in df.columns:
@@ -206,12 +254,10 @@ except:
     }
 
 # =========================================================
-# SIDEBAR FILTERS
+# SIDEBAR
 # =========================================================
 
 st.sidebar.title("⚙ Institutional Controls")
-
-# SCORE FILTER
 
 min_score = st.sidebar.slider(
 
@@ -221,8 +267,6 @@ min_score = st.sidebar.slider(
     100,
     20
 )
-
-# SIGNAL FILTER
 
 signal_options = sorted(
 
@@ -236,12 +280,8 @@ selected_signals = st.sidebar.multiselect(
 
     "Signal Filter",
 
-    signal_options,
-
-    default=[]
+    signal_options
 )
-
-# SECTOR FILTER
 
 df["sector"] = (
 
@@ -260,13 +300,18 @@ selected_sectors = st.sidebar.multiselect(
 
     "Sector Filter",
 
-    sector_options,
+    sector_options
+)
 
-    default=[]
+watchlist = st.sidebar.multiselect(
+
+    "📌 Watchlist",
+
+    sorted(df["symbol"].astype(str).unique())
 )
 
 # =========================================================
-# APPLY FILTERS
+# FILTERS
 # =========================================================
 
 filtered_df = df.copy()
@@ -290,7 +335,19 @@ if len(selected_sectors) > 0:
     ]
 
 # =========================================================
-# UNIVERSE METRICS
+# EMPTY DATA
+# =========================================================
+
+if filtered_df.empty:
+
+    st.warning(
+        "No stocks match filters. Reduce score or clear filters."
+    )
+
+    st.stop()
+
+# =========================================================
+# SIDEBAR METRICS
 # =========================================================
 
 st.sidebar.markdown("---")
@@ -304,18 +361,6 @@ st.sidebar.metric(
     "Filtered Stocks",
     len(filtered_df)
 )
-
-# =========================================================
-# EMPTY DATA FIX
-# =========================================================
-
-if filtered_df.empty:
-
-    st.warning(
-        "No stocks match filters. Reduce score or clear filters."
-    )
-
-    st.stop()
 
 # =========================================================
 # LIVE MARKET OVERVIEW
@@ -344,9 +389,10 @@ for i, (name, ticker) in enumerate(indices.items()):
 
         prev_close = round(hist["Close"].iloc[-2], 2)
 
-        change = latest_close - prev_close
-
-        pct = round((change / prev_close) * 100, 2)
+        pct = round(
+            ((latest_close - prev_close) / prev_close) * 100,
+            2
+        )
 
         market_cols[i].metric(
 
@@ -392,8 +438,8 @@ k3.metric(
 )
 
 k4.metric(
-    "Top Score",
-    round(filtered_df["institutional_score"].max(), 2)
+    "AI Confidence",
+    round(filtered_df["ai_confidence"].mean(), 2)
 )
 
 k5.metric(
@@ -463,6 +509,45 @@ st.plotly_chart(
 )
 
 # =========================================================
+# SECTOR ROTATION
+# =========================================================
+
+st.subheader("🔄 Sector Rotation")
+
+sector_rotation = (
+
+    filtered_df
+    .groupby("sector")
+    .agg({
+
+        "momentum_20": "mean",
+        "institutional_score": "mean"
+
+    })
+    .reset_index()
+)
+
+sector_fig = px.scatter(
+
+    sector_rotation,
+
+    x="momentum_20",
+
+    y="institutional_score",
+
+    size="institutional_score",
+
+    color="sector",
+
+    template="plotly_dark"
+)
+
+st.plotly_chart(
+    sector_fig,
+    use_container_width=True
+)
+
+# =========================================================
 # HEATMAP
 # =========================================================
 
@@ -497,7 +582,7 @@ st.plotly_chart(
 )
 
 # =========================================================
-# MOMENTUM SCATTER
+# MOMENTUM ANALYTICS
 # =========================================================
 
 st.subheader("⚡ Momentum Analytics")
@@ -535,12 +620,10 @@ st.subheader("🏆 Institutional Leaders")
 top_df = (
 
     filtered_df
-
     .sort_values(
         "institutional_score",
         ascending=False
     )
-
     .head(25)
 )
 
@@ -567,6 +650,60 @@ st.plotly_chart(
 )
 
 # =========================================================
+# STOCK ANALYSIS
+# =========================================================
+
+st.subheader("📉 Stock Analysis")
+
+selected_stock = st.selectbox(
+
+    "Select Stock",
+
+    sorted(filtered_df["symbol"].astype(str).unique())
+)
+
+try:
+
+    ticker = yf.Ticker(f"{selected_stock}.NS")
+
+    hist = ticker.history(period="6mo")
+
+    candle = go.Figure(
+
+        data=[
+
+            go.Candlestick(
+
+                x=hist.index,
+
+                open=hist["Open"],
+
+                high=hist["High"],
+
+                low=hist["Low"],
+
+                close=hist["Close"]
+            )
+        ]
+    )
+
+    candle.update_layout(
+
+        template="plotly_dark",
+
+        height=700
+    )
+
+    st.plotly_chart(
+        candle,
+        use_container_width=True
+    )
+
+except:
+
+    st.warning("Chart unavailable")
+
+# =========================================================
 # DATA TABLE
 # =========================================================
 
@@ -574,19 +711,22 @@ st.subheader("📋 Institutional Screener")
 
 display_cols = [
 
-    c for c in [
+    "symbol",
+    "sector",
+    "institutional_score",
+    "signal",
+    "ai_confidence",
+    "relative_strength_rank",
+    "risk_score",
+    "momentum_20",
+    "rsi",
+    "adx",
+    "volatility"
+]
 
-        "symbol",
-        "sector",
-        "institutional_score",
-        "signal",
-        "momentum_20",
-        "rsi",
-        "adx",
-        "volatility"
+display_cols = [
 
-    ]
-
+    c for c in display_cols
     if c in filtered_df.columns
 ]
 
@@ -602,7 +742,7 @@ table_df = (
     )
 )
 
-st.dataframe(
+st.data_editor(
 
     table_df,
 
