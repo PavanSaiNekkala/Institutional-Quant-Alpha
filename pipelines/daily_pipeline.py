@@ -1,496 +1,343 @@
 # =========================================================
-# INSTITUTIONAL DAILY PIPELINE (ADVANCED VERSION)
+# INSTITUTIONAL DAILY PIPELINE
 # =========================================================
+
+import warnings
+warnings.filterwarnings("ignore")
 
 import pandas as pd
 import numpy as np
+from pathlib import Path
+
+# =========================================================
+# INTERNAL IMPORTS
+# =========================================================
 
 from core.market_data import (
     update_market_data,
-    load_parquet,
-    save_parquet
+    load_parquet
 )
 
-from core.indicators import add_indicators
+from core.indicators import (
+    add_indicators
+)
 
 # =========================================================
-# SAFE VALUE
+# BASE PATHS
 # =========================================================
 
-def safe_value(v, default=0):
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+PARQUET_DIR = (
+    BASE_DIR
+    / "data"
+    / "parquet"
+)
+
+PARQUET_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+# =========================================================
+# MEMORY OPTIMIZATION
+# =========================================================
+
+def optimize_dataframe(df):
+
+    df = df.copy()
+
+    float_cols = df.select_dtypes(
+        include=["float64"]
+    ).columns
+
+    int_cols = df.select_dtypes(
+        include=["int64"]
+    ).columns
+
+    for col in float_cols:
+        df[col] = pd.to_numeric(
+            df[col],
+            downcast="float"
+        )
+
+    for col in int_cols:
+        df[col] = pd.to_numeric(
+            df[col],
+            downcast="integer"
+        )
+
+    return df
+
+# =========================================================
+# CLEAN DATA
+# =========================================================
+
+def clean_market_data(df):
+
+    df = df.copy()
+
+    # remove duplicates
+    df = df.drop_duplicates()
+
+    # sort
+    if "symbol" in df.columns and "date" in df.columns:
+
+        df = df.sort_values(
+            by=["symbol", "date"]
+        )
+
+    # remove invalid close
+    if "close" in df.columns:
+
+        df = df[
+            df["close"] > 0
+        ]
+
+    return df
+
+# =========================================================
+# PROCESS SINGLE STOCK
+# =========================================================
+
+def process_single_stock(symbol, market_df):
 
     try:
 
-        if pd.isna(v):
-            return default
+        temp = market_df[
+            market_df["symbol"] == symbol
+        ].copy()
 
-        if np.isinf(v):
-            return default
+        if temp.empty:
+            return None
 
-        return float(v)
+        # sort by date
+        if "date" in temp.columns:
+            temp = temp.sort_values("date")
 
-    except:
-        return default
+        # add indicators
+        temp = add_indicators(temp)
 
-# =========================================================
-# SIGNAL ENGINE
-# =========================================================
+        # latest row only
+        latest = temp.iloc[-1:].copy()
 
-def generate_signal(score):
+        return latest
 
-    if score >= 85:
-        return "STRONG_BUY"
+    except Exception as e:
 
-    elif score >= 70:
-        return "BUY"
+        print(f"PROCESS ERROR -> {symbol} -> {e}")
 
-    elif score >= 55:
-        return "ACCUMULATE"
-
-    elif score >= 40:
-        return "WATCH"
-
-    elif score >= 25:
-        return "HOLD"
-
-    return "AVOID"
+        return None
 
 # =========================================================
-# HOLD DAYS ESTIMATION
+# BUILD FINAL DATASET
 # =========================================================
 
-def estimate_hold_days(signal):
+def build_final_dataset(market_df):
 
-    mapping = {
+    print("\nBuilding institutional dataset...")
 
-        "STRONG_BUY": 30,
-        "BUY": 20,
-        "ACCUMULATE": 15,
-        "WATCH": 10,
-        "HOLD": 5,
-        "AVOID": 0
+    symbols = market_df["symbol"].unique()
 
-    }
+    processed = []
 
-    return mapping.get(signal, 5)
+    total = len(symbols)
 
-# =========================================================
-# FACTOR SCORE ENGINE
-# =========================================================
+    for idx, symbol in enumerate(symbols, start=1):
 
-def compute_factor_scores(df):
+        print(f"[{idx}/{total}] Processing -> {symbol}")
 
-    results = []
+        result = process_single_stock(
+            symbol,
+            market_df
+        )
 
-    symbols = df["symbol"].unique()
+        if result is not None:
+            processed.append(result)
 
-    print(f"Scoring {len(symbols)} symbols")
+    if not processed:
 
-    for symbol in symbols:
+        print("No processed stocks available")
 
-        try:
+        return pd.DataFrame()
 
-            sdf = (
-                df[df["symbol"] == symbol]
-                .copy()
-                .reset_index(drop=True)
-            )
-
-            if len(sdf) < 50:
-                continue
-
-            latest = sdf.iloc[-1]
-
-            # =================================================
-            # FACTORS
-            # =================================================
-
-            momentum_score = safe_value(
-                latest.get("momentum_20")
-            )
-
-            rsi_score = safe_value(
-                latest.get("rsi")
-            )
-
-            volatility_score = (
-                100 -
-                safe_value(
-                    latest.get("volatility")
-                ) * 100
-            )
-
-            trend_score = (
-                safe_value(
-                    latest.get("trend_score")
-                ) * 15
-            )
-
-            institutional_score = (
-                safe_value(
-                    latest.get("institutional_score")
-                ) * 10
-            )
-
-            sharpe_score = (
-                safe_value(
-                    latest.get("rolling_sharpe")
-                ) * 10
-            )
-
-            adx_score = safe_value(
-                latest.get("adx")
-            )
-
-            volume_score = (
-                safe_value(
-                    latest.get("volume_spike")
-                ) * 10
-            )
-
-            roc_score = safe_value(
-                latest.get("roc_12")
-            )
-
-            macd_score = (
-                safe_value(
-                    latest.get("macd_hist")
-                ) * 20
-            )
-
-            drawdown_penalty = abs(
-                safe_value(
-                    latest.get("drawdown")
-                ) * 100
-            )
-
-            # =================================================
-            # MASTER SCORE
-            # =================================================
-
-            master_score = (
-
-                momentum_score * 0.20 +
-
-                rsi_score * 0.10 +
-
-                volatility_score * 0.10 +
-
-                trend_score * 0.15 +
-
-                institutional_score * 0.15 +
-
-                sharpe_score * 0.10 +
-
-                adx_score * 0.05 +
-
-                volume_score * 0.05 +
-
-                roc_score * 0.05 +
-
-                macd_score * 0.05 -
-
-                drawdown_penalty * 0.05
-
-            )
-
-            # =================================================
-            # CLAMP
-            # =================================================
-
-            master_score = max(
-                0,
-                min(master_score, 100)
-            )
-
-            signal = generate_signal(master_score)
-
-            hold_days = estimate_hold_days(signal)
-
-            atr = safe_value(
-                latest.get("atr")
-            )
-
-            expected_5d = atr * 1.5
-            expected_15d = atr * 3
-            expected_30d = atr * 5
-
-            # =================================================
-            # STORE
-            # =================================================
-
-            results.append({
-
-                "symbol": symbol,
-
-                "close": round(
-                    safe_value(
-                        latest.get("close")
-                    ),
-                    2
-                ),
-
-                "master_score": round(
-                    master_score,
-                    2
-                ),
-
-                "signal": signal,
-
-                "hold_days": hold_days,
-
-                "rsi": round(rsi_score, 2),
-
-                "momentum_20": round(
-                    momentum_score,
-                    2
-                ),
-
-                "volatility": round(
-                    safe_value(
-                        latest.get("volatility")
-                    ),
-                    4
-                ),
-
-                "atr": round(atr, 2),
-
-                "adx": round(adx_score, 2),
-
-                "roc_12": round(roc_score, 2),
-
-                "volume_spike": round(
-                    safe_value(
-                        latest.get("volume_spike")
-                    ),
-                    2
-                ),
-
-                "rolling_sharpe": round(
-                    safe_value(
-                        latest.get("rolling_sharpe")
-                    ),
-                    2
-                ),
-
-                "institutional_score": round(
-                    safe_value(
-                        latest.get("institutional_score")
-                    ),
-                    2
-                ),
-
-                "trend_score": round(
-                    safe_value(
-                        latest.get("trend_score")
-                    ),
-                    2
-                ),
-
-                "expected_5d": round(
-                    expected_5d,
-                    2
-                ),
-
-                "expected_15d": round(
-                    expected_15d,
-                    2
-                ),
-
-                "expected_30d": round(
-                    expected_30d,
-                    2
-                )
-
-            })
-
-        except Exception as e:
-
-            print(f"{symbol} FACTOR ERROR -> {e}")
-
-    factor_df = pd.DataFrame(results)
-
-    if factor_df.empty:
-        return factor_df
-
-    factor_df = factor_df.sort_values(
-        by="master_score",
-        ascending=False
+    final_df = pd.concat(
+        processed,
+        ignore_index=True
     )
 
-    factor_df["rank"] = range(
-        1,
-        len(factor_df) + 1
+    # clean
+    final_df = clean_market_data(final_df)
+
+    # optimize memory
+    final_df = optimize_dataframe(final_df)
+
+    return final_df
+
+# =========================================================
+# SAVE OUTPUTS
+# =========================================================
+
+def save_outputs(final_df):
+
+    parquet_path = (
+        PARQUET_DIR
+        / "institutional_dataset.parquet"
     )
 
-    return factor_df
+    csv_path = (
+        PARQUET_DIR
+        / "institutional_dataset.csv"
+    )
+
+    # parquet
+    final_df.to_parquet(
+        parquet_path,
+        index=False
+    )
+
+    # csv
+    final_df.to_csv(
+        csv_path,
+        index=False
+    )
+
+    print(f"\nSaved Parquet -> {parquet_path}")
+    print(f"Saved CSV -> {csv_path}")
+
+# =========================================================
+# DISPLAY SUMMARY
+# =========================================================
+
+def display_summary(final_df):
+
+    print("\n" + "=" * 60)
+    print("PIPELINE SUMMARY")
+    print("=" * 60)
+
+    print(f"Total Stocks     : {final_df['symbol'].nunique()}")
+
+    print(f"Total Rows       : {len(final_df):,}")
+
+    if "close" in final_df.columns:
+
+        print(
+            f"Average Price    : "
+            f"{round(final_df['close'].mean(), 2)}"
+        )
+
+    if "rsi" in final_df.columns:
+
+        print(
+            f"Average RSI      : "
+            f"{round(final_df['rsi'].mean(), 2)}"
+        )
+
+    if "momentum_20" in final_df.columns:
+
+        print(
+            f"Average Momentum : "
+            f"{round(final_df['momentum_20'].mean(), 2)}"
+        )
+
+    print("=" * 60)
 
 # =========================================================
 # MAIN PIPELINE
 # =========================================================
 
-def run_pipeline():
-
-    print("=" * 60)
-    print("RUNNING INSTITUTIONAL PIPELINE")
-    print("=" * 60)
-
-    # =====================================================
-    # STEP 1 — UPDATE MARKET DATA
-    # =====================================================
+def main():
 
     try:
+
+        print("=" * 60)
+        print("STARTING INSTITUTIONAL PIPELINE")
+        print("=" * 60)
+
+        # =================================================
+        # STEP 1 -> DOWNLOAD MARKET DATA
+        # =================================================
+
+        print("\nSTEP 1 -> Updating Market Data")
 
         update_market_data()
 
-    except Exception as e:
+        # =================================================
+        # STEP 2 -> LOAD MARKET DATA
+        # =================================================
 
-        print(f"MARKET DATA ERROR -> {e}")
-        return
+        print("\nSTEP 2 -> Loading Market Data")
 
-    # =====================================================
-    # STEP 2 — LOAD DATA
-    # =====================================================
-
-    try:
-
-        df = load_parquet(
+        market_df = load_parquet(
             "market_data.parquet"
         )
 
-    except Exception as e:
+        if market_df.empty:
 
-        print(f"LOAD ERROR -> {e}")
-        return
+            print("Market data is empty")
 
-    if df.empty:
+            return
 
-        print("Market data empty")
-        return
-
-    print(f"Loaded rows -> {len(df)}")
-
-    # =====================================================
-    # STEP 3 — COMPUTE INDICATORS
-    # =====================================================
-
-    indicator_results = []
-
-    symbols = df["symbol"].unique()
-
-    print(f"Processing {len(symbols)} symbols")
-
-    for symbol in symbols:
-
-        try:
-
-            sdf = (
-                df[df["symbol"] == symbol]
-                .copy()
-                .reset_index(drop=True)
-            )
-
-            sdf = add_indicators(sdf)
-
-            indicator_results.append(sdf)
-
-            print(f"{symbol} indicators completed")
-
-        except Exception as e:
-
-            print(f"{symbol} INDICATOR ERROR -> {e}")
-
-    # =====================================================
-    # VALIDATION
-    # =====================================================
-
-    if len(indicator_results) == 0:
-
-        print("No indicator results generated")
-        return
-
-    try:
-
-        final_df = pd.concat(
-            indicator_results,
-            ignore_index=True
+        print(
+            f"Loaded rows -> "
+            f"{len(market_df):,}"
         )
 
-    except Exception as e:
+        # =================================================
+        # STEP 3 -> CLEAN
+        # =================================================
 
-        print(f"CONCAT ERROR -> {e}")
-        return
+        print("\nSTEP 3 -> Cleaning Market Data")
 
-    if final_df.empty:
-
-        print("Final dataframe empty")
-        return
-
-    print(f"Final rows -> {len(final_df)}")
-
-    # =====================================================
-    # STEP 4 — SAVE INDICATORS
-    # =====================================================
-
-    try:
-
-        save_parquet(
-            final_df,
-            "indicator_data.parquet"
+        market_df = clean_market_data(
+            market_df
         )
 
-        print("Indicator data saved")
-
-    except Exception as e:
-
-        print(f"SAVE ERROR -> {e}")
-
-    # =====================================================
-    # STEP 5 — FACTOR ENGINE
-    # =====================================================
-
-    factor_df = compute_factor_scores(
-        final_df
-    )
-
-    if factor_df.empty:
-
-        print("Factor dataframe empty")
-        return
-
-    print(f"Factor rows -> {len(factor_df)}")
-
-    # =====================================================
-    # STEP 6 — SAVE FACTORS
-    # =====================================================
-
-    try:
-
-        save_parquet(
-            factor_df,
-            "factor_scores.parquet"
+        market_df = optimize_dataframe(
+            market_df
         )
 
-        print("Factor scores saved")
+        # =================================================
+        # STEP 4 -> BUILD DATASET
+        # =================================================
+
+        print("\nSTEP 4 -> Calculating Indicators")
+
+        final_df = build_final_dataset(
+            market_df
+        )
+
+        if final_df.empty:
+
+            print("Final dataset empty")
+
+            return
+
+        # =================================================
+        # STEP 5 -> SAVE
+        # =================================================
+
+        print("\nSTEP 5 -> Saving Outputs")
+
+        save_outputs(final_df)
+
+        # =================================================
+        # STEP 6 -> SUMMARY
+        # =================================================
+
+        display_summary(final_df)
+
+        print("\nPIPELINE COMPLETED SUCCESSFULLY")
 
     except Exception as e:
 
-        print(f"FACTOR SAVE ERROR -> {e}")
-
-    print("=" * 60)
-    print("PIPELINE COMPLETED SUCCESSFULLY")
-    print("=" * 60)
+        print("\nPIPELINE FAILED")
+        print(str(e))
 
 # =========================================================
-# MAIN
+# RUN
 # =========================================================
 
 if __name__ == "__main__":
 
-    try:
-
-        run_pipeline()
-
-    except Exception as e:
-
-        print(f"PIPELINE FAILED -> {e}")
+    main()
