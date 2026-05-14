@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 # =========================================================
-# FIX IMPORT PATHS
+# ROOT PATH FIX
 # =========================================================
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -17,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 import streamlit as st
 import pandas as pd
 import numpy as np
+
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -28,9 +29,37 @@ from core.market_regime import detect_market_regime
 
 st.set_page_config(
     page_title="Institutional Quant Dashboard",
-    page_icon="📊",
+    page_icon="📈",
     layout="wide"
 )
+
+# =========================================================
+# CUSTOM CSS
+# =========================================================
+
+st.markdown("""
+<style>
+
+.main {
+    background-color: #0E1117;
+}
+
+.metric-card {
+    background-color: #161B22;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #30363D;
+}
+
+div[data-testid="metric-container"] {
+    background-color: #161B22;
+    border: 1px solid #30363D;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # =========================================================
 # LOAD DATA
@@ -46,14 +75,10 @@ DATA_PATH = (
 if not DATA_PATH.exists():
 
     st.error(
-        "❌ institutional_dataset.parquet not found"
+        "Dataset not found"
     )
 
     st.stop()
-
-# =========================================================
-# READ DATA
-# =========================================================
 
 try:
 
@@ -61,49 +86,40 @@ try:
 
 except Exception as e:
 
-    st.error(f"Dataset load failed: {e}")
+    st.error(f"Load Error: {e}")
 
     st.stop()
 
 # =========================================================
-# BASIC CLEANUP
+# CLEAN COLUMNS
 # =========================================================
 
 df.columns = [c.lower() for c in df.columns]
 
 # =========================================================
-# REQUIRED COLUMN CHECKS
-# =========================================================
-
-required_columns = [
-    "institutional_score"
-]
-
-missing_cols = [
-    c for c in required_columns
-    if c not in df.columns
-]
-
-if missing_cols:
-
-    st.error(
-        f"Missing columns: {missing_cols}"
-    )
-
-    st.stop()
-
-# =========================================================
-# CREATE FALLBACK COLUMNS
+# FALLBACKS
 # =========================================================
 
 if "symbol" not in df.columns:
     df["symbol"] = np.arange(len(df))
 
+if "sector" not in df.columns:
+    df["sector"] = "Unknown"
+
 if "momentum_20" not in df.columns:
     df["momentum_20"] = 0
 
+if "volatility" not in df.columns:
+    df["volatility"] = 0
+
+if "adx" not in df.columns:
+    df["adx"] = 0
+
+if "rsi" not in df.columns:
+    df["rsi"] = 50
+
 # =========================================================
-# CREATE SIGNAL COLUMN
+# SIGNAL CREATION
 # =========================================================
 
 if "signal" not in df.columns:
@@ -131,23 +147,20 @@ if "signal" not in df.columns:
     ]
 
     df["signal"] = np.select(
-
         conditions,
-
         choices,
-
         default="STRONG SELL"
     )
 
 # =========================================================
-# MARKET REGIME SAFE HANDLING
+# MARKET REGIME
 # =========================================================
 
 try:
 
     regime = detect_market_regime(df)
 
-except Exception:
+except:
 
     regime = {
 
@@ -164,17 +177,58 @@ except Exception:
 # TITLE
 # =========================================================
 
-st.title(
-    "📊 Institutional Quant Dashboard"
-)
+st.title("📊 Institutional Quant Dashboard")
 
 st.markdown("---")
 
 # =========================================================
-# MARKET REGIME
+# SIDEBAR
 # =========================================================
 
-col1, col2, col3, col4 = st.columns(4)
+st.sidebar.title("⚙ Institutional Controls")
+
+min_score = st.sidebar.slider(
+    "Minimum Institutional Score",
+    0,
+    100,
+    60
+)
+
+selected_signals = st.sidebar.multiselect(
+    "Signal Filter",
+    sorted(df["signal"].unique()),
+    default=sorted(df["signal"].unique())
+)
+
+selected_sectors = st.sidebar.multiselect(
+    "Sector Filter",
+    sorted(df["sector"].unique()),
+    default=sorted(df["sector"].unique())
+)
+
+# =========================================================
+# FILTERED DATA
+# =========================================================
+
+filtered_df = df[
+    (df["institutional_score"] >= min_score)
+    &
+    (df["signal"].isin(selected_signals))
+    &
+    (df["sector"].isin(selected_sectors))
+]
+
+if filtered_df.empty:
+
+    st.warning("No stocks match filters")
+
+    st.stop()
+
+# =========================================================
+# KPI ROW
+# =========================================================
+
+col1, col2, col3, col4, col5 = st.columns(5)
 
 col1.metric(
     "Market Regime",
@@ -182,231 +236,266 @@ col1.metric(
 )
 
 col2.metric(
-    "Trend Strength",
-    regime.get("trend_strength", "N/A")
+    "Stocks",
+    len(filtered_df)
 )
 
 col3.metric(
-    "Momentum",
-    regime.get("momentum", "N/A")
+    "Avg Score",
+    round(
+        filtered_df["institutional_score"].mean(),
+        2
+    )
 )
 
 col4.metric(
-    "Volatility",
-    regime.get("volatility", "N/A")
+    "Top Score",
+    round(
+        filtered_df["institutional_score"].max(),
+        2
+    )
+)
+
+col5.metric(
+    "Avg Momentum",
+    round(
+        filtered_df["momentum_20"].mean(),
+        2
+    )
 )
 
 st.markdown("---")
 
 # =========================================================
-# SIDEBAR FILTERS
+# TOP LEADERS
 # =========================================================
 
-st.sidebar.title(
-    "⚙ Institutional Controls"
-)
+left, right = st.columns([2, 1])
 
-min_score = st.sidebar.slider(
-    "Minimum Institutional Score",
-    0,
-    100,
-    50
-)
+with left:
 
-signal_options = sorted(
-    df["signal"].unique().tolist()
-)
+    st.subheader("🏆 Institutional Leaders")
 
-selected_signals = st.sidebar.multiselect(
-    "Signal Filter",
-    signal_options,
-    default=signal_options
-)
+    top_df = (
+        filtered_df
+        .sort_values(
+            "institutional_score",
+            ascending=False
+        )
+        .head(20)
+    )
+
+    fig = px.bar(
+
+        top_df,
+
+        x="symbol",
+
+        y="institutional_score",
+
+        color="institutional_score",
+
+        hover_data=["signal", "sector"],
+
+        template="plotly_dark"
+    )
+
+    fig.update_layout(
+        height=500
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+with right:
+
+    st.subheader("📊 Signal Breakdown")
+
+    pie = px.pie(
+
+        filtered_df,
+
+        names="signal",
+
+        template="plotly_dark"
+    )
+
+    pie.update_layout(
+        height=500
+    )
+
+    st.plotly_chart(
+        pie,
+        use_container_width=True
+    )
 
 # =========================================================
-# FILTER DATA
+# SECTOR ANALYTICS
 # =========================================================
 
-filtered_df = df[
-    (df["institutional_score"] >= min_score)
-    &
-    (df["signal"].isin(selected_signals))
+st.subheader("🏭 Sector Analytics")
+
+sector_df = (
+
+    filtered_df
+
+    .groupby("sector")
+
+    .agg({
+
+        "institutional_score": "mean",
+
+        "momentum_20": "mean",
+
+        "volatility": "mean",
+
+        "symbol": "count"
+
+    })
+
+    .reset_index()
+
+)
+
+sector_df.columns = [
+
+    "sector",
+
+    "avg_score",
+
+    "avg_momentum",
+
+    "avg_volatility",
+
+    "stocks"
+
 ]
 
-# =========================================================
-# EMPTY CHECK
-# =========================================================
+sector_chart = px.treemap(
 
-if filtered_df.empty:
+    sector_df,
 
-    st.warning(
-        "No stocks match selected filters"
-    )
+    path=["sector"],
 
-    st.stop()
+    values="stocks",
 
-# =========================================================
-# TOP STOCKS
-# =========================================================
+    color="avg_score",
 
-st.subheader(
-    "🏆 Top Institutional Stocks"
+    template="plotly_dark"
 )
 
-top_df = (
-    filtered_df
-    .sort_values(
-        "institutional_score",
-        ascending=False
-    )
-    .head(25)
-)
-
-fig = px.bar(
-
-    top_df,
-
-    x="symbol",
-
-    y="institutional_score",
-
-    color="institutional_score",
-
-    hover_data=["signal"],
-
-    title="Top Institutional Stocks"
-)
-
-fig.update_layout(
-    template="plotly_dark",
-    height=500
+sector_chart.update_layout(
+    height=600
 )
 
 st.plotly_chart(
-    fig,
+    sector_chart,
     use_container_width=True
 )
 
 # =========================================================
-# SIGNAL DISTRIBUTION
+# MOMENTUM ANALYTICS
 # =========================================================
 
-st.subheader(
-    "📊 Signal Distribution"
-)
+left, right = st.columns(2)
 
-signal_fig = px.histogram(
+with left:
+
+    st.subheader("⚡ Momentum vs Score")
+
+    scatter = px.scatter(
+
+        filtered_df,
+
+        x="momentum_20",
+
+        y="institutional_score",
+
+        size="adx",
+
+        color="signal",
+
+        hover_data=["symbol", "sector"],
+
+        template="plotly_dark"
+    )
+
+    scatter.update_layout(
+        height=600
+    )
+
+    st.plotly_chart(
+        scatter,
+        use_container_width=True
+    )
+
+with right:
+
+    st.subheader("📈 RSI Heatmap")
+
+    heat = px.density_heatmap(
+
+        filtered_df,
+
+        x="rsi",
+
+        y="institutional_score",
+
+        template="plotly_dark"
+    )
+
+    heat.update_layout(
+        height=600
+    )
+
+    st.plotly_chart(
+        heat,
+        use_container_width=True
+    )
+
+# =========================================================
+# VOLATILITY ANALYTICS
+# =========================================================
+
+st.subheader("🌪 Volatility Analytics")
+
+vol_chart = px.box(
 
     filtered_df,
 
     x="signal",
 
+    y="volatility",
+
     color="signal",
 
-    title="Signal Distribution"
+    template="plotly_dark"
 )
 
-signal_fig.update_layout(
-    template="plotly_dark",
-    height=450
+vol_chart.update_layout(
+    height=500
 )
 
 st.plotly_chart(
-    signal_fig,
+    vol_chart,
     use_container_width=True
 )
 
 # =========================================================
-# MOMENTUM VS SCORE
+# TOP TABLE
 # =========================================================
 
-st.subheader(
-    "⚡ Momentum vs Institutional Score"
-)
-
-scatter = px.scatter(
-
-    filtered_df,
-
-    x="momentum_20",
-
-    y="institutional_score",
-
-    color="signal",
-
-    hover_data=["symbol"],
-
-    title="Momentum vs Institutional Score"
-)
-
-scatter.update_layout(
-    template="plotly_dark",
-    height=550
-)
-
-st.plotly_chart(
-    scatter,
-    use_container_width=True
-)
-
-# =========================================================
-# SCORE STATISTICS
-# =========================================================
-
-st.subheader(
-    "📈 Institutional Statistics"
-)
-
-s1, s2, s3, s4 = st.columns(4)
-
-s1.metric(
-    "Stocks",
-    len(filtered_df)
-)
-
-s2.metric(
-    "Average Score",
-    round(
-        filtered_df[
-            "institutional_score"
-        ].mean(),
-        2
-    )
-)
-
-s3.metric(
-    "Highest Score",
-    round(
-        filtered_df[
-            "institutional_score"
-        ].max(),
-        2
-    )
-)
-
-s4.metric(
-    "Lowest Score",
-    round(
-        filtered_df[
-            "institutional_score"
-        ].min(),
-        2
-    )
-)
-
-# =========================================================
-# DATA TABLE
-# =========================================================
-
-st.subheader(
-    "📋 Institutional Dataset"
-)
+st.subheader("📋 Institutional Stock Screener")
 
 display_cols = [
 
     c for c in [
 
         "symbol",
+
+        "sector",
 
         "institutional_score",
 
@@ -429,33 +518,42 @@ display_cols = [
     if c in filtered_df.columns
 ]
 
-st.dataframe(
+styled_df = (
 
-    filtered_df[
-        display_cols
-    ].sort_values(
+    filtered_df
+
+    [display_cols]
+
+    .sort_values(
 
         "institutional_score",
 
         ascending=False
-    ),
+    )
+)
 
-    use_container_width=True
+st.dataframe(
+
+    styled_df,
+
+    use_container_width=True,
+
+    height=700
 )
 
 # =========================================================
-# DOWNLOAD BUTTON
+# DOWNLOAD
 # =========================================================
 
-csv = filtered_df.to_csv(index=False)
+csv = styled_df.to_csv(index=False)
 
 st.download_button(
 
-    label="⬇ Download Filtered Dataset",
+    label="⬇ Download Institutional Dataset",
 
     data=csv,
 
-    file_name="institutional_filtered.csv",
+    file_name="institutional_quant.csv",
 
     mime="text/csv"
 )
