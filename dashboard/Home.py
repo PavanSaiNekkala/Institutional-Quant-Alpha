@@ -212,102 +212,107 @@ except:
 st.title("📊 Institutional Quant Dashboard")
 
 st.markdown("---")
+# =========================================================
+# SIDEBAR FILTERS
+# =========================================================
+
+st.sidebar.title(
+    "⚙ Institutional Controls"
+)
 
 # =========================================================
-# SIDEBAR
-# =========================================================
-
-st.sidebar.title("⚙ Institutional Controls")
-
-# ---------------------------------------------------------
 # SCORE FILTER
-# ---------------------------------------------------------
+# =========================================================
 
 min_score = st.sidebar.slider(
-
     "Minimum Institutional Score",
-
-    0,
-
-    100,
-
-    20
+    min_value=0,
+    max_value=100,
+    value=20
 )
 
-# ---------------------------------------------------------
+# =========================================================
 # SIGNAL FILTER
-# ---------------------------------------------------------
+# =========================================================
 
-all_signals = sorted(
-
-    df["signal"].dropna().unique()
-)
-
-default_signals = [
-
-    s for s in [
-
-        "STRONG BUY",
-        "BUY",
-        "HOLD"
-
+signal_options = sorted(
+    [
+        str(x)
+        for x in df["signal"]
+        .dropna()
+        .unique()
     ]
-
-    if s in all_signals
-]
+)
 
 selected_signals = st.sidebar.multiselect(
-
     "Signal Filter",
-
-    options=all_signals,
-
-    default=default_signals
+    options=signal_options,
+    default=[]
 )
 
-# ---------------------------------------------------------
+# =========================================================
 # SECTOR FILTER
-# ---------------------------------------------------------
+# =========================================================
 
-all_sectors = sorted(
+if "sector" not in df.columns:
 
-    df["sector"].fillna("Unknown").unique()
+    df["sector"] = "Unknown"
+
+df["sector"] = (
+
+    df["sector"]
+
+    .fillna("Unknown")
+
+    .astype(str)
+)
+
+sector_options = sorted(
+    df["sector"].unique()
 )
 
 selected_sectors = st.sidebar.multiselect(
-
     "Sector Filter",
-
-    options=all_sectors,
-
-    default=all_sectors
+    options=sector_options,
+    default=[]
 )
 
 # =========================================================
-# FILTERED DATA
+# APPLY FILTERS
 # =========================================================
 
-filtered_df = df[
+filtered_df = df.copy()
 
-    (df["institutional_score"] >= min_score)
-
-    &
-
-    (df["signal"].isin(selected_signals))
-
-    &
-
-    (df["sector"].isin(selected_sectors))
+# Score Filter
+filtered_df = filtered_df[
+    filtered_df["institutional_score"]
+    >= min_score
 ]
 
+# Signal Filter
+if len(selected_signals) > 0:
+
+    filtered_df = filtered_df[
+        filtered_df["signal"]
+        .isin(selected_signals)
+    ]
+
+# Sector Filter
+if len(selected_sectors) > 0:
+
+    filtered_df = filtered_df[
+        filtered_df["sector"]
+        .isin(selected_sectors)
+    ]
+
 # =========================================================
-# EMPTY FILTER CHECK
+# EMPTY DATA FIX
 # =========================================================
 
 if filtered_df.empty:
 
     st.warning(
-        "No stocks match filters. Reduce score or select BUY/HOLD."
+        "No stocks match filters. Reduce score or clear filters."
     )
 
     st.stop()
