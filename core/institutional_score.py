@@ -2,8 +2,10 @@
 # INSTITUTIONAL SCORING ENGINE
 # =========================================================
 
+from core.institutional_score import generate_scores
 import pandas as pd
 import numpy as np
+
 
 # =========================================================
 # RELATIVE STRENGTH SCORE
@@ -227,7 +229,7 @@ def institutional_score(df):
 # =========================================================
 # GENERATE FULL SCORES
 # =========================================================
-
+a
 def generate_scores(df):
 
     return {
