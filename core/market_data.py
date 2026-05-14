@@ -26,28 +26,89 @@ PARQUET_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # =========================================================
-# NSE STOCK UNIVERSE
+# INPUT FILE
 # =========================================================
 
-DEFAULT_UNIVERSE = [
-    "RELIANCE.NS",
-    "TCS.NS",
-    "INFY.NS",
-    "HDFCBANK.NS",
-    "ICICIBANK.NS",
-    "SBIN.NS",
-    "LT.NS",
-    "ITC.NS",
-    "BHARTIARTL.NS",
-    "AXISBANK.NS"
-]
+VALID_STOCKS_FILE = RAW_DATA_DIR / "valid_stocks.xlsx"
+
+# =========================================================
+# LOAD STOCK UNIVERSE FROM EXCEL
+# =========================================================
+
+def load_stock_universe():
+
+    try:
+
+        if not VALID_STOCKS_FILE.exists():
+
+            print(f"File not found -> {VALID_STOCKS_FILE}")
+
+            return []
+
+        # Read Excel file
+        df = pd.read_excel(VALID_STOCKS_FILE)
+
+        if df.empty:
+
+            print("Excel file is empty")
+
+            return []
+
+        # Possible column names
+        possible_cols = [
+            "symbol",
+            "symbols",
+            "ticker",
+            "tickers",
+            "stock",
+            "stocks"
+        ]
+
+        symbol_col = None
+
+        # Detect symbol column automatically
+        for col in df.columns:
+
+            if str(col).strip().lower() in possible_cols:
+                symbol_col = col
+                break
+
+        # Fallback to first column
+        if symbol_col is None:
+            symbol_col = df.columns[0]
+
+        # Clean symbols
+        symbols = (
+            df[symbol_col]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+
+        # Add NSE suffix if missing
+        cleaned_symbols = []
+
+        for s in symbols:
+
+            if not s.endswith(".NS"):
+                s = f"{s}.NS"
+
+            cleaned_symbols.append(s)
+
+        print(f"Loaded {len(cleaned_symbols)} stocks")
+
+        return cleaned_symbols
+
+    except Exception as e:
+
+        print(f"Universe loading error -> {e}")
+
+        return []
 
 # =========================================================
 # CLEAN YFINANCE DATAFRAME
-# =========================================================
-
-# =========================================================
-# CLEAN OHLCV DATA
 # =========================================================
 
 def clean_ohlcv(df):
@@ -57,48 +118,15 @@ def clean_ohlcv(df):
 
     df = df.copy()
 
-    # =====================================================
-    # HANDLE MULTIINDEX COLUMNS
-    # =====================================================
+    df.columns = [str(c).lower() for c in df.columns]
 
-    if isinstance(df.columns, pd.MultiIndex):
+    rename_map = {
+        "adj close": "adj_close"
+    }
 
-        df.columns = df.columns.get_level_values(0)
-
-    # =====================================================
-    # STANDARDIZE COLUMN NAMES
-    # =====================================================
-
-    df.columns = [
-        str(c).strip().lower().replace(" ", "_")
-        for c in df.columns
-    ]
-
-    # =====================================================
-    # RESET INDEX
-    # =====================================================
+    df.rename(columns=rename_map, inplace=True)
 
     df.reset_index(inplace=True)
-
-    # =====================================================
-    # ENSURE REQUIRED COLUMNS EXIST
-    # =====================================================
-
-    required_cols = [
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume"
-    ]
-
-    for col in required_cols:
-
-        if col not in df.columns:
-
-            print(f"Missing column -> {col}")
-
-            return pd.DataFrame()
 
     return df
 
@@ -109,6 +137,8 @@ def clean_ohlcv(df):
 def download_single_stock(symbol, period="1y"):
 
     try:
+
+        print(f"Downloading -> {symbol}")
 
         df = yf.download(
             symbol,
@@ -121,6 +151,9 @@ def download_single_stock(symbol, period="1y"):
         df = clean_ohlcv(df)
 
         if df.empty:
+
+            print(f"No data -> {symbol}")
+
             return None
 
         df["symbol"] = symbol
@@ -134,33 +167,125 @@ def download_single_stock(symbol, period="1y"):
         return None
 
 # =========================================================
-# MULTITHREADED DOWNLOAD ENGINE
+# MEMORY OPTIMIZED DOWNLOAD ENGINE
+# =========================================================
+
+def optimize_dataframe(df):
+
+    try:
+
+        float_cols = df.select_dtypes(
+            include=["float64"]
+        ).columns
+
+        int_cols = df.select_dtypes(
+            include=["int64"]
+        ).columns
+
+        df[float_cols] = df[float_cols].astype(
+            "float32"
+        )
+
+        df[int_cols] = df[int_cols].astype(
+            "int32"
+        )
+
+        return df
+
+    except:
+
+        return df
+
+# =========================================================
+# DOWNLOAD MARKET DATA
 # =========================================================
 
 def download_market_data(
     symbols,
     period="1y",
-    max_workers=5
+    batch_size=50
 ):
 
-    results = []
+    parquet_path = (
+        PARQUET_DIR /
+        "market_data.parquet"
+    )
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    all_batches = []
 
-        dfs = executor.map(
-            lambda s: download_single_stock(s, period),
-            symbols
-        )
+    total = len(symbols)
 
-        for df in dfs:
+    for start in range(0, total, batch_size):
 
-            if df is not None and not df.empty:
-                results.append(df)
+        end = start + batch_size
 
-    if not results:
+        batch_symbols = symbols[start:end]
+
+        print("=" * 60)
+        print(f"Processing Batch {start} -> {end}")
+        print("=" * 60)
+
+        batch_results = []
+
+        for symbol in batch_symbols:
+
+            try:
+
+                df = download_single_stock(
+                    symbol,
+                    period
+                )
+
+                if df is not None and not df.empty:
+
+                    df = optimize_dataframe(df)
+
+                    batch_results.append(df)
+
+            except Exception as e:
+
+                print(f"{symbol} batch error -> {e}")
+
+        # =================================================
+        # SAVE BATCH
+        # =================================================
+
+        if batch_results:
+
+            batch_df = pd.concat(
+                batch_results,
+                ignore_index=True
+            )
+
+            batch_df = optimize_dataframe(
+                batch_df
+            )
+
+            all_batches.append(batch_df)
+
+            print(
+                f"Batch rows -> {len(batch_df)}"
+            )
+
+            # Free memory
+            del batch_results
+
+    # =====================================================
+    # FINAL CONCAT
+    # =====================================================
+
+    if not all_batches:
+
         return pd.DataFrame()
 
-    final_df = pd.concat(results, ignore_index=True)
+    final_df = pd.concat(
+        all_batches,
+        ignore_index=True
+    )
+
+    final_df = optimize_dataframe(
+        final_df
+    )
 
     return final_df
 
@@ -195,9 +320,23 @@ def load_parquet(filename):
 
 def update_market_data():
 
-    print("Downloading market data...")
+    print("=" * 60)
+    print("INSTITUTIONAL MARKET DATA ENGINE")
+    print("=" * 60)
 
-    df = download_market_data(DEFAULT_UNIVERSE)
+    # Load stock universe
+    symbols = load_stock_universe()
+
+    if not symbols:
+
+        print("No valid symbols found")
+
+        return
+
+    print(f"Starting download for {len(symbols)} stocks")
+
+    # Download data
+    df = download_market_data(symbols)
 
     if df.empty:
 
@@ -205,9 +344,19 @@ def update_market_data():
 
         return
 
+    # Save parquet
     save_parquet(df, "market_data.parquet")
 
+    # Save CSV backup
+    csv_path = RAW_DATA_DIR / "market_data.csv"
+
+    df.to_csv(csv_path, index=False)
+
+    print(f"CSV backup saved -> {csv_path}")
+
+    print("=" * 60)
     print("Market data updated successfully")
+    print("=" * 60)
 
 # =========================================================
 # MAIN
