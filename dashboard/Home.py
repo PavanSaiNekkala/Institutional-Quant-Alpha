@@ -1,123 +1,67 @@
 # =========================================================
-# INSTITUTIONAL QUANT PLATFORM V2
+# INSTITUTIONAL QUANT PLATFORM
 # =========================================================
 
 import streamlit as st
 import pandas as pd
+import numpy as np
+
 import plotly.express as px
 import plotly.graph_objects as go
 
-from risk.regime_engine import (
-    detect_market_regime
-)
-
-from strategy.sector_rotation import (
-    compute_sector_strength
-)
-
-from core.meta_factor_engine import (
-    compute_meta_factors
-)
-
-from signals.signal_engine import (
-    generate_signals
-)
-
-from portfolio.optimizer import (
-    optimize_portfolio
-)
-
-from monitoring.health_check import (
-    generate_monitoring_report
-)
+from core.market_regime import detect_market_regime
 
 # =========================================================
 # PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
-
     page_title="Institutional Quant Platform",
-
     page_icon="📊",
-
-    layout="wide",
-
-    initial_sidebar_state="expanded"
-
+    layout="wide"
 )
 
 # =========================================================
-# LOAD FACTOR DATA
+# LOAD DATA
 # =========================================================
 
 @st.cache_data(ttl=3600)
-
 def load_data():
 
-    return pd.read_parquet(
-        "data/parquet/factor_scores.parquet"
-    )
+    try:
+
+        df = pd.read_parquet(
+            "data/parquet/factor_scores.parquet"
+        )
+
+        return df
+
+    except Exception as e:
+
+        st.error(f"Data loading failed: {e}")
+
+        return pd.DataFrame()
 
 factor_df = load_data()
 
 # =========================================================
-# REGIME ENGINE
+# EMPTY CHECK
+# =========================================================
+
+if factor_df.empty:
+
+    st.warning(
+        "No factor data found. Run pipeline first."
+    )
+
+    st.stop()
+
+# =========================================================
+# MARKET REGIME
 # =========================================================
 
 regime_data = detect_market_regime(
     factor_df
-)
-
-# =========================================================
-# SECTOR ENGINE
-# =========================================================
-
-sector_df = compute_sector_strength(
-    factor_df
-)
-
-# =========================================================
-# META FACTORS
-# =========================================================
-
-meta_df = compute_meta_factors(
-
-    factor_df,
-    sector_df,
-    regime_data
-
-)
-
-# =========================================================
-# SIGNAL ENGINE
-# =========================================================
-
-signal_df = generate_signals(
-    meta_df
-)
-
-# =========================================================
-# PORTFOLIO
-# =========================================================
-
-portfolio_df = optimize_portfolio(
-
-    signal_df,
-    regime_data,
-    total_capital=1000000
-
-)
-
-# =========================================================
-# MONITORING
-# =========================================================
-
-monitoring_report = generate_monitoring_report(
-
-    portfolio_df,
-    regime_data
-
 )
 
 # =========================================================
@@ -128,64 +72,62 @@ st.sidebar.title(
     "⚙️ Institutional Controls"
 )
 
+# Signal Filter
+signal_options = sorted(
+    factor_df["signal"].dropna().unique()
+)
+
 selected_signals = st.sidebar.multiselect(
 
     "Filter Signals",
 
-    signal_df["signal"].unique(),
+    signal_options,
 
-    default=signal_df["signal"].unique()
-
+    default=signal_options
 )
 
+# Search
 search_stock = st.sidebar.text_input(
     "Search Symbol"
 )
 
-min_confidence = st.sidebar.slider(
+# Score Filter
+min_score = st.sidebar.slider(
 
-    "Minimum Confidence",
+    "Minimum Institutional Score",
 
     0,
 
     100,
 
-    50
-
+    60
 )
 
 # =========================================================
 # FILTER DATA
 # =========================================================
 
-filtered_df = signal_df.copy()
+filtered_df = factor_df.copy()
 
 filtered_df = filtered_df[
-
     filtered_df["signal"].isin(
         selected_signals
     )
-
 ]
 
 filtered_df = filtered_df[
-
-    filtered_df["confidence"]
-    >= min_confidence
-
+    filtered_df["institutional_score"]
+    >= min_score
 ]
 
 if search_stock:
 
     filtered_df = filtered_df[
-
         filtered_df["symbol"]
-
         .str.contains(
             search_stock.upper(),
             na=False
         )
-
     ]
 
 # =========================================================
@@ -197,11 +139,11 @@ st.title(
 )
 
 st.caption(
-    "Institutional Portfolio Intelligence System"
+    "Institutional Intelligence Dashboard"
 )
 
 # =========================================================
-# REGIME PANEL
+# MARKET REGIME PANEL
 # =========================================================
 
 st.subheader(
@@ -214,141 +156,109 @@ with col1:
 
     st.metric(
         "Regime",
-        regime_data["regime"]
+        regime_data.get(
+            "regime",
+            "UNKNOWN"
+        )
     )
 
 with col2:
 
     st.metric(
-        "India VIX",
-        regime_data["vix"]
+        "Trend",
+        regime_data.get(
+            "trend_strength",
+            0
+        )
     )
 
 with col3:
 
     st.metric(
-        "Market Breadth",
-        regime_data["breadth"]
+        "Volatility",
+        round(
+            regime_data.get(
+                "volatility",
+                0
+            ),
+            2
+        )
     )
 
 with col4:
 
     st.metric(
-        "NIFTY",
-        regime_data["nifty_close"]
+        "Momentum",
+        round(
+            regime_data.get(
+                "momentum",
+                0
+            ),
+            2
+        )
     )
 
 # =========================================================
-# PORTFOLIO SUMMARY
+# TOP LEVEL METRICS
 # =========================================================
 
 st.subheader(
-    "💼 Portfolio Summary"
+    "📈 Institutional Metrics"
 )
 
-summary = monitoring_report["summary"]
+m1, m2, m3, m4, m5 = st.columns(5)
 
-c1, c2, c3, c4, c5 = st.columns(5)
-
-with c1:
+with m1:
 
     st.metric(
-        "Positions",
-        summary.get(
-            "total_positions",
-            0
+        "Stocks",
+        len(filtered_df)
+    )
+
+with m2:
+
+    st.metric(
+        "Avg Score",
+        round(
+            filtered_df[
+                "institutional_score"
+            ].mean(),
+            2
         )
     )
 
-with c2:
+with m3:
 
     st.metric(
-        "Allocation",
-        summary.get(
-            "total_allocation",
-            0
+        "Avg RSI",
+        round(
+            filtered_df["rsi"].mean(),
+            2
         )
     )
 
-with c3:
+with m4:
 
     st.metric(
-        "Confidence",
-        summary.get(
-            "avg_confidence",
-            0
+        "Avg Momentum",
+        round(
+            filtered_df[
+                "momentum_20"
+            ].mean(),
+            2
         )
     )
 
-with c4:
+with m5:
 
     st.metric(
-        "Meta Score",
-        summary.get(
-            "avg_meta_score",
-            0
+        "Avg Sharpe",
+        round(
+            filtered_df[
+                "sharpe_ratio"
+            ].mean(),
+            2
         )
-    )
-
-with c5:
-
-    st.metric(
-        "Expected 30D",
-        summary.get(
-            "avg_expected_30d",
-            0
-        )
-    )
-
-# =========================================================
-# RISK ALERTS
-# =========================================================
-
-st.subheader(
-    "🚨 Institutional Risk Alerts"
-)
-
-alerts = monitoring_report["alerts"]
-
-if alerts:
-
-    for alert in alerts:
-
-        st.warning(alert)
-
-else:
-
-    st.success(
-        "No active institutional risk alerts"
-    )
-
-# =========================================================
-# SECTOR EXPOSURE
-# =========================================================
-
-st.subheader(
-    "🏢 Sector Exposure"
-)
-
-sector_exposure_df = monitoring_report[
-    "sector_exposure"
-]
-
-if not sector_exposure_df.empty:
-
-    fig = px.treemap(
-
-        sector_exposure_df,
-
-        path=["sector"],
-
-        values="portfolio_weight"
-
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
     )
 
 # =========================================================
@@ -356,88 +266,92 @@ if not sector_exposure_df.empty:
 # =========================================================
 
 st.subheader(
-    "📈 Signal Distribution"
+    "📊 Signal Distribution"
 )
 
-signal_distribution_df = monitoring_report[
-    "signal_distribution"
+signal_counts = (
+    filtered_df["signal"]
+    .value_counts()
+    .reset_index()
+)
+
+signal_counts.columns = [
+    "signal",
+    "count"
 ]
 
-if not signal_distribution_df.empty:
+fig_signal = px.pie(
 
-    pie_fig = px.pie(
+    signal_counts,
 
-        signal_distribution_df,
+    names="signal",
 
-        names="signal",
+    values="count",
 
-        values="count",
+    hole=0.5
+)
 
-        hole=0.5
+st.plotly_chart(
+    fig_signal,
+    use_container_width=True
+)
 
+# =========================================================
+# SECTOR DISTRIBUTION
+# =========================================================
+
+if "sector" in filtered_df.columns:
+
+    st.subheader(
+        "🏢 Sector Distribution"
+    )
+
+    sector_counts = (
+        filtered_df["sector"]
+        .value_counts()
+        .reset_index()
+    )
+
+    sector_counts.columns = [
+        "sector",
+        "count"
+    ]
+
+    fig_sector = px.treemap(
+
+        sector_counts,
+
+        path=["sector"],
+
+        values="count"
     )
 
     st.plotly_chart(
-        pie_fig,
+        fig_sector,
         use_container_width=True
     )
 
 # =========================================================
-# TOP SIGNALS
+# META FACTOR SCATTER
 # =========================================================
 
 st.subheader(
-    "🚀 Institutional Signal Rankings"
-)
-
-display_columns = [
-
-    "symbol",
-    "sector",
-    "theme",
-    "signal",
-    "confidence",
-    "meta_score",
-    "expected_5d",
-    "expected_15d",
-    "expected_30d",
-    "hold_days",
-    "upside_score"
-
-]
-
-st.dataframe(
-
-    filtered_df[display_columns],
-
-    use_container_width=True,
-
-    height=600
-
-)
-
-# =========================================================
-# META SCORE ANALYTICS
-# =========================================================
-
-st.subheader(
-    "📊 Meta Score Analytics"
+    "📊 Institutional Scatter Analysis"
 )
 
 scatter_fig = px.scatter(
 
     filtered_df,
 
-    x="confidence",
+    x="institutional_score",
 
-    y="meta_score",
+    y="momentum_20",
 
     color="signal",
 
-    size="upside_score",
+    size="volume_ratio",
 
     hover_name="symbol"
-
 )
 
 st.plotly_chart(
@@ -446,29 +360,60 @@ st.plotly_chart(
 )
 
 # =========================================================
-# SYSTEM HEALTH
+# TOP STOCKS
 # =========================================================
 
 st.subheader(
-    "🖥️ System Health"
+    "🚀 Top Institutional Stocks"
 )
 
-health = monitoring_report[
-    "system_health"
+display_columns = [
+
+    "symbol",
+    "sector",
+    "signal",
+    "institutional_score",
+    "rsi",
+    "momentum_20",
+    "trend_score",
+    "sharpe_ratio",
+    "volume_ratio",
+    "volatility"
+
 ]
 
-health_df = pd.DataFrame(
+available_columns = [
 
-    list(health.items()),
+    c for c in display_columns
 
-    columns=["Component", "Status"]
+    if c in filtered_df.columns
+]
 
+top_df = filtered_df.sort_values(
+
+    "institutional_score",
+
+    ascending=False
 )
 
 st.dataframe(
 
-    health_df,
+    top_df[available_columns],
 
-    use_container_width=True
+    use_container_width=True,
 
+    height=700
 )
+
+# =========================================================
+# RAW DATA
+# =========================================================
+
+with st.expander(
+    "View Raw Data"
+):
+
+    st.dataframe(
+        filtered_df,
+        use_container_width=True
+    )
