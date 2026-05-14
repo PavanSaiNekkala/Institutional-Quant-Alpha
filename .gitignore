@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+
+# Streamlit
+.streamlit/
+
+# Notebook
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Cache
+data/cache/
+
+# Large raw files
+data/raw/
