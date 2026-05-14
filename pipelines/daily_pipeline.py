@@ -11,7 +11,7 @@ from core.market_data import (
     save_parquet
 )
 
-import core.indicators as indicators
+from core.indicators import add_indicators
 
 # =========================================================
 # SAFE VALUE
@@ -30,7 +30,6 @@ def safe_value(v, default=0):
         return float(v)
 
     except:
-
         return default
 
 # =========================================================
@@ -103,15 +102,22 @@ def compute_factor_scores(df):
             latest = sdf.iloc[-1]
 
             # =================================================
-            # FACTOR EXTRACTION
+            # FACTORS
             # =================================================
 
-            momentum_score = latest["momentum_20"]
+            momentum_score = safe_value(
+                latest.get("momentum_20")
+            )
 
-            rsi_score = latest["rsi"]
+            rsi_score = safe_value(
+                latest.get("rsi")
+            )
 
             volatility_score = (
-                100 - latest["volatility"] * 100
+                100 -
+                safe_value(
+                    latest.get("volatility")
+                ) * 100
             )
 
             trend_score = (
@@ -146,9 +152,11 @@ def compute_factor_scores(df):
                 latest.get("roc_12")
             )
 
-            macd_score = safe_value(
-                latest.get("macd_hist")
-            ) * 20
+            macd_score = (
+                safe_value(
+                    latest.get("macd_hist")
+                ) * 20
+            )
 
             drawdown_penalty = abs(
                 safe_value(
@@ -157,7 +165,7 @@ def compute_factor_scores(df):
             )
 
             # =================================================
-            # MASTER INSTITUTIONAL SCORE
+            # MASTER SCORE
             # =================================================
 
             master_score = (
@@ -187,7 +195,7 @@ def compute_factor_scores(df):
             )
 
             # =================================================
-            # CLAMP SCORE
+            # CLAMP
             # =================================================
 
             master_score = max(
@@ -195,26 +203,20 @@ def compute_factor_scores(df):
                 min(master_score, 100)
             )
 
-            # =================================================
-            # SIGNAL
-            # =================================================
-
             signal = generate_signal(master_score)
 
             hold_days = estimate_hold_days(signal)
 
-            # =================================================
-            # EXPECTED RETURNS
-            # =================================================
-
-            atr = safe_value(latest.get("atr"))
+            atr = safe_value(
+                latest.get("atr")
+            )
 
             expected_5d = atr * 1.5
             expected_15d = atr * 3
             expected_30d = atr * 5
 
             # =================================================
-            # SAVE RESULT
+            # STORE
             # =================================================
 
             results.append({
@@ -222,7 +224,9 @@ def compute_factor_scores(df):
                 "symbol": symbol,
 
                 "close": round(
-                    safe_value(latest.get("close")),
+                    safe_value(
+                        latest.get("close")
+                    ),
                     2
                 ),
 
@@ -235,14 +239,7 @@ def compute_factor_scores(df):
 
                 "hold_days": hold_days,
 
-                # =============================================
-                # CORE FACTORS
-                # =============================================
-
-                "rsi": round(
-                    rsi_score,
-                    2
-                ),
+                "rsi": round(rsi_score, 2),
 
                 "momentum_20": round(
                     momentum_score,
@@ -256,20 +253,11 @@ def compute_factor_scores(df):
                     4
                 ),
 
-                "atr": round(
-                    atr,
-                    2
-                ),
+                "atr": round(atr, 2),
 
-                "adx": round(
-                    adx_score,
-                    2
-                ),
+                "adx": round(adx_score, 2),
 
-                "roc_12": round(
-                    roc_score,
-                    2
-                ),
+                "roc_12": round(roc_score, 2),
 
                 "volume_spike": round(
                     safe_value(
@@ -299,10 +287,6 @@ def compute_factor_scores(df):
                     2
                 ),
 
-                # =============================================
-                # EXPECTED RETURNS
-                # =============================================
-
                 "expected_5d": round(
                     expected_5d,
                     2
@@ -327,12 +311,7 @@ def compute_factor_scores(df):
     factor_df = pd.DataFrame(results)
 
     if factor_df.empty:
-
         return factor_df
-
-    # =====================================================
-    # RANKING
-    # =====================================================
 
     factor_df = factor_df.sort_values(
         by="master_score",
@@ -364,6 +343,11 @@ def run_pipeline():
 
         update_market_data()
 
+    except Exception as e:
+
+        print(f"MARKET DATA ERROR -> {e}")
+        return
+
     # =====================================================
     # STEP 2 — LOAD DATA
     # =====================================================
@@ -374,10 +358,14 @@ def run_pipeline():
             "market_data.parquet"
         )
 
+    except Exception as e:
+
+        print(f"LOAD ERROR -> {e}")
+        return
+
     if df.empty:
 
         print("Market data empty")
-
         return
 
     print(f"Loaded rows -> {len(df)}")
@@ -413,28 +401,25 @@ def run_pipeline():
             print(f"{symbol} INDICATOR ERROR -> {e}")
 
     # =====================================================
-    # SAFETY CHECK
-    # =====================================================
-
-    if len(indicator_results) == 0:
-
-        print("No indicator results generated")
-        return
-
-    # =====================================================
     # VALIDATION
     # =====================================================
 
     if len(indicator_results) == 0:
 
         print("No indicator results generated")
-
         return
 
-    final_df = pd.concat(
-        indicator_results,
-        ignore_index=True
-    )
+    try:
+
+        final_df = pd.concat(
+            indicator_results,
+            ignore_index=True
+        )
+
+    except Exception as e:
+
+        print(f"CONCAT ERROR -> {e}")
+        return
 
     if final_df.empty:
 
@@ -442,12 +427,6 @@ def run_pipeline():
         return
 
     print(f"Final rows -> {len(final_df)}")
-
-    if final_df.empty:
-
-        print("Final dataframe empty")
-
-        return
 
     # =====================================================
     # STEP 4 — SAVE INDICATORS
@@ -486,6 +465,7 @@ def run_pipeline():
     # =====================================================
 
     try:
+
         save_parquet(
             factor_df,
             "factor_scores.parquet"
@@ -494,6 +474,7 @@ def run_pipeline():
         print("Factor scores saved")
 
     except Exception as e:
+
         print(f"FACTOR SAVE ERROR -> {e}")
 
     print("=" * 60)
@@ -506,4 +487,10 @@ def run_pipeline():
 
 if __name__ == "__main__":
 
-    run_pipeline()
+    try:
+
+        run_pipeline()
+
+    except Exception as e:
+
+        print(f"PIPELINE FAILED -> {e}")
