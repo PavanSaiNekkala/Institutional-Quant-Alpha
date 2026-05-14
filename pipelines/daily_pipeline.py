@@ -25,6 +25,10 @@ def compute_factor_scores(df):
 
     results = []
 
+    if df.empty:
+        print("Factor scoring skipped -> empty dataframe")
+        return pd.DataFrame()
+
     symbols = df["symbol"].unique()
 
     for symbol in symbols:
@@ -38,6 +42,26 @@ def compute_factor_scores(df):
             )
 
             if len(sdf) < 50:
+                print(f"{symbol} skipped -> insufficient data")
+                continue
+
+            required_cols = [
+                "close",
+                "momentum_20",
+                "rsi",
+                "volatility",
+                "atr"
+            ]
+
+            missing_cols = [
+                c for c in required_cols
+                if c not in sdf.columns
+            ]
+
+            if missing_cols:
+                print(
+                    f"{symbol} missing columns -> {missing_cols}"
+                )
                 continue
 
             latest = sdf.iloc[-1]
@@ -46,12 +70,16 @@ def compute_factor_scores(df):
             # FACTORS
             # =================================================
 
-            momentum_score = latest["momentum_20"]
+            momentum_score = float(
+                latest["momentum_20"]
+            )
 
-            rsi_score = latest["rsi"]
+            rsi_score = float(
+                latest["rsi"]
+            )
 
             volatility_score = (
-                100 - latest["volatility"] * 100
+                100 - float(latest["volatility"]) * 100
             )
 
             sharpe = sharpe_ratio(
@@ -190,7 +218,7 @@ def compute_factor_scores(df):
 
         except Exception as e:
 
-            print(f"{symbol} ERROR -> {e}")
+            print(f"{symbol} FACTOR ERROR -> {e}")
 
     return pd.DataFrame(results)
 
@@ -208,20 +236,36 @@ def run_pipeline():
     # STEP 1 — DOWNLOAD MARKET DATA
     # =====================================================
 
-    update_market_data()
+    try:
+
+        update_market_data()
+
+    except Exception as e:
+
+        print(f"MARKET DATA ERROR -> {e}")
+        return
 
     # =====================================================
     # STEP 2 — LOAD MARKET DATA
     # =====================================================
 
-    df = load_parquet(
-        "market_data.parquet"
-    )
+    try:
+
+        df = load_parquet(
+            "market_data.parquet"
+        )
+
+    except Exception as e:
+
+        print(f"LOAD ERROR -> {e}")
+        return
 
     if df.empty:
 
         print("Market data empty")
         return
+
+    print(f"Loaded rows -> {len(df)}")
 
     # =====================================================
     # STEP 3 — COMPUTE INDICATORS
@@ -230,6 +274,8 @@ def run_pipeline():
     indicator_results = []
 
     symbols = df["symbol"].unique()
+
+    print(f"Processing {len(symbols)} symbols")
 
     for symbol in symbols:
 
@@ -241,27 +287,69 @@ def run_pipeline():
                 .reset_index(drop=True)
             )
 
+            if sdf.empty:
+                continue
+
+            sdf.columns = [
+                str(c).lower()
+                for c in sdf.columns
+            ]
+
+            if "close" not in sdf.columns:
+
+                print(
+                    f"{symbol} skipped -> close missing"
+                )
+
+                continue
+
             sdf = add_indicators(sdf)
 
             indicator_results.append(sdf)
 
+            print(f"{symbol} indicators completed")
+
         except Exception as e:
 
-            print(f"{symbol} indicator error -> {e}")
+            print(f"{symbol} INDICATOR ERROR -> {e}")
+
+    # =====================================================
+    # SAFETY CHECK
+    # =====================================================
+
+    if len(indicator_results) == 0:
+
+        print("No indicator results generated")
+        return
 
     final_df = pd.concat(
         indicator_results,
         ignore_index=True
     )
 
+    if final_df.empty:
+
+        print("Final dataframe empty")
+        return
+
+    print(f"Final rows -> {len(final_df)}")
+
     # =====================================================
     # STEP 4 — SAVE INDICATOR DATA
     # =====================================================
 
-    save_parquet(
-        final_df,
-        "indicator_data.parquet"
-    )
+    try:
+
+        save_parquet(
+            final_df,
+            "indicator_data.parquet"
+        )
+
+        print("Indicator data saved")
+
+    except Exception as e:
+
+        print(f"SAVE ERROR -> {e}")
 
     # =====================================================
     # STEP 5 — COMPUTE FACTOR SCORES
@@ -271,14 +359,29 @@ def run_pipeline():
         final_df
     )
 
+    if factor_df.empty:
+
+        print("Factor dataframe empty")
+        return
+
+    print(f"Factor rows -> {len(factor_df)}")
+
     # =====================================================
     # STEP 6 — SAVE FACTOR DATA
     # =====================================================
 
-    save_parquet(
-        factor_df,
-        "factor_scores.parquet"
-    )
+    try:
+
+        save_parquet(
+            factor_df,
+            "factor_scores.parquet"
+        )
+
+        print("Factor scores saved")
+
+    except Exception as e:
+
+        print(f"FACTOR SAVE ERROR -> {e}")
 
     print("=" * 60)
     print("PIPELINE COMPLETED SUCCESSFULLY")
