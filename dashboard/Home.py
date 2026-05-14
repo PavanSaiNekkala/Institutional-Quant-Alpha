@@ -371,6 +371,115 @@ col5.metric(
 st.markdown("---")
 
 # =========================================================
+# STOCK UNIVERSE OVERVIEW
+# =========================================================
+
+st.subheader("🌐 Loaded Stock Universe")
+
+u1, u2, u3, u4 = st.columns(4)
+
+u1.metric(
+    "Total Loaded Stocks",
+    len(df)
+)
+
+u2.metric(
+    "Filtered Stocks",
+    len(filtered_df)
+)
+
+u3.metric(
+    "Sector Coverage",
+    df["sector"].nunique()
+)
+
+u4.metric(
+    "Signal Types",
+    df["signal"].nunique()
+)
+
+# =========================================================
+# TOP SECTORS
+# =========================================================
+
+sector_counts = (
+
+    filtered_df["sector"]
+
+    .value_counts()
+
+    .reset_index()
+)
+
+sector_counts.columns = [
+
+    "sector",
+
+    "stocks"
+]
+
+left, right = st.columns(2)
+
+with left:
+
+    sector_bar = px.bar(
+
+        sector_counts.head(15),
+
+        x="sector",
+
+        y="stocks",
+
+        color="stocks",
+
+        title="Top Sector Participation",
+
+        template="plotly_dark"
+    )
+
+    sector_bar.update_layout(
+
+        height=450,
+
+        xaxis_title="Sector",
+
+        yaxis_title="Stocks"
+    )
+
+    st.plotly_chart(
+
+        sector_bar,
+
+        use_container_width=True
+    )
+
+with right:
+
+    signal_pie = px.pie(
+
+        filtered_df,
+
+        names="signal",
+
+        title="Institutional Breadth",
+
+        template="plotly_dark"
+    )
+
+    signal_pie.update_layout(
+        height=450
+    )
+
+    st.plotly_chart(
+
+        signal_pie,
+
+        use_container_width=True
+    )
+
+st.markdown("---")
+
+# =========================================================
 # TOP LEADERS
 # =========================================================
 
