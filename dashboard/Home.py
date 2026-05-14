@@ -1,3 +1,6 @@
+import yfinance as yf
+import numpy as np
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -53,7 +56,11 @@ st.set_page_config(
 
     layout="wide"
 )
+st_autorefresh = st.empty()
 
+st.caption(
+    f"Last Updated: {datetime.now().strftime('%H:%M:%S')}"
+)
 # =========================================================
 # CUSTOM CSS
 # =========================================================
@@ -210,6 +217,161 @@ except:
 # =========================================================
 
 st.title("📊 Institutional Quant Dashboard")
+
+st.markdown("---")
+
+# =========================================================
+# LIVE MARKET DASHBOARD
+# =========================================================
+
+st.subheader("📡 Live Market Overview")
+
+# =========================================================
+# MARKET BREADTH
+# =========================================================
+
+st.subheader("📈 Market Breadth")
+
+advancers = len(
+    filtered_df[
+        filtered_df["signal"]
+        .isin(["BUY", "STRONG BUY"])
+    ]
+)
+
+decliners = len(
+    filtered_df[
+        filtered_df["signal"]
+        .isin(["SELL", "STRONG SELL"])
+    ]
+)
+
+neutral = len(
+    filtered_df[
+        filtered_df["signal"] == "HOLD"
+    ]
+)
+
+breadth_df = pd.DataFrame({
+    "Category": [
+        "Advancers",
+        "Decliners",
+        "Neutral"
+    ],
+    "Count": [
+        advancers,
+        decliners,
+        neutral
+    ]
+})
+
+breadth_fig = px.pie(
+    breadth_df,
+    names="Category",
+    values="Count",
+    hole=0.55,
+    title="Market Breadth"
+)
+
+st.plotly_chart(
+    breadth_fig,
+    use_container_width=True
+)
+# =========================================================
+# LIVE HEATMAP
+# =========================================================
+
+st.subheader("🔥 Institutional Heatmap")
+
+heatmap_df = (
+    filtered_df
+    .sort_values(
+        "institutional_score",
+        ascending=False
+    )
+    .head(30)
+)
+
+heatmap_fig = px.treemap(
+    heatmap_df,
+    path=["sector", "symbol"],
+    values="institutional_score",
+    color="institutional_score",
+    hover_data=[
+        "signal",
+        "momentum_20"
+    ],
+    title="Top Institutional Opportunities"
+)
+
+st.plotly_chart(
+    heatmap_fig,
+    use_container_width=True
+)
+# =========================================================
+# MOMENTUM LEADERS
+# =========================================================
+
+st.subheader("🚀 Momentum Leaders")
+
+leaders = (
+    filtered_df
+    .sort_values(
+        "momentum_20",
+        ascending=False
+    )
+    .head(15)
+)
+
+st.dataframe(
+    leaders[
+        [
+            "symbol",
+            "sector",
+            "institutional_score",
+            "momentum_20",
+            "signal"
+        ]
+    ],
+    use_container_width=True
+)
+
+# NIFTY / BANKNIFTY / SENSEX
+indices = {
+    "NIFTY 50": "^NSEI",
+    "BANK NIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN"
+}
+
+market_cols = st.columns(3)
+
+for i, (name, ticker) in enumerate(indices.items()):
+
+    try:
+
+        live = yf.Ticker(ticker)
+
+        hist = live.history(period="2d")
+
+        latest_close = round(hist["Close"].iloc[-1], 2)
+        prev_close = round(hist["Close"].iloc[-2], 2)
+
+        change = latest_close - prev_close
+        pct = round((change / prev_close) * 100, 2)
+
+        market_cols[i].metric(
+            label=name,
+            value=f"{latest_close}",
+            delta=f"{pct}%"
+        )
+
+    except:
+
+        market_cols[i].metric(
+            label=name,
+            value="N/A",
+            delta="N/A"
+        )
 
 st.markdown("---")
 # =========================================================
