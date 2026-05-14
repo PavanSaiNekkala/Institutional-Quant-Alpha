@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
+
   institutional-pipeline:
 
     runs-on: ubuntu-latest
@@ -28,10 +29,16 @@ jobs:
           pip install fastparquet
           pip install streamlit
           pip install plotly
+          pip install scipy
+          pip install scikit-learn
+          pip install ta
+          pip install -r requirements.txt
 
-      - name: Verify Installation
+      - name: Verify Libraries
         run: |
-          python -c "import pandas as pd; print(pd.__version__)"
+          python -c "import pandas"
+          python -c "import numpy"
+          python -c "import yfinance"
 
       - name: Run Institutional Pipeline
         run: |
