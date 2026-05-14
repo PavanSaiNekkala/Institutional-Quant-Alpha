@@ -1,5 +1,4 @@
 import yfinance as yf
-import numpy as np
 from datetime import datetime
 import sys
 from pathlib import Path
@@ -56,11 +55,7 @@ st.set_page_config(
 
     layout="wide"
 )
-st_autorefresh = st.empty()
 
-st.caption(
-    f"Last Updated: {datetime.now().strftime('%H:%M:%S')}"
-)
 # =========================================================
 # CUSTOM CSS
 # =========================================================
@@ -70,12 +65,10 @@ st.markdown("""
 <style>
 
 .main {
-
     background-color: #0E1117;
 }
 
 section[data-testid="stSidebar"] {
-
     background-color: #161B22;
 }
 
@@ -91,13 +84,24 @@ div[data-testid="metric-container"] {
 }
 
 h1, h2, h3 {
-
     color: white;
 }
 
 </style>
 
 """, unsafe_allow_html=True)
+
+# =========================================================
+# TITLE
+# =========================================================
+
+st.title("📊 Institutional Quant Dashboard")
+
+st.caption(
+    f"Last Updated: {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}"
+)
+
+st.markdown("---")
 
 # =========================================================
 # LOAD DATA
@@ -163,31 +167,23 @@ if "signal" not in df.columns:
     conditions = [
 
         df["institutional_score"] >= 80,
-
         df["institutional_score"] >= 65,
-
         df["institutional_score"] >= 50,
-
         df["institutional_score"] >= 35
     ]
 
     choices = [
 
         "STRONG BUY",
-
         "BUY",
-
         "HOLD",
-
         "SELL"
     ]
 
     df["signal"] = np.select(
 
         conditions,
-
         choices,
-
         default="STRONG SELL"
     )
 
@@ -204,27 +200,208 @@ except:
     regime = {
 
         "regime": "NEUTRAL",
-
         "trend_strength": "N/A",
-
         "momentum": "N/A",
-
         "volatility": "N/A"
     }
 
 # =========================================================
-# TITLE
+# SIDEBAR FILTERS
 # =========================================================
 
-st.title("📊 Institutional Quant Dashboard")
+st.sidebar.title("⚙ Institutional Controls")
+
+# SCORE FILTER
+
+min_score = st.sidebar.slider(
+
+    "Minimum Institutional Score",
+
+    0,
+    100,
+    20
+)
+
+# SIGNAL FILTER
+
+signal_options = sorted(
+
+    df["signal"]
+    .dropna()
+    .astype(str)
+    .unique()
+)
+
+selected_signals = st.sidebar.multiselect(
+
+    "Signal Filter",
+
+    signal_options,
+
+    default=[]
+)
+
+# SECTOR FILTER
+
+df["sector"] = (
+
+    df["sector"]
+    .fillna("Unknown")
+    .astype(str)
+)
+
+sector_options = sorted(
+
+    df["sector"]
+    .unique()
+)
+
+selected_sectors = st.sidebar.multiselect(
+
+    "Sector Filter",
+
+    sector_options,
+
+    default=[]
+)
+
+# =========================================================
+# APPLY FILTERS
+# =========================================================
+
+filtered_df = df.copy()
+
+filtered_df = filtered_df[
+    filtered_df["institutional_score"] >= min_score
+]
+
+if len(selected_signals) > 0:
+
+    filtered_df = filtered_df[
+        filtered_df["signal"]
+        .isin(selected_signals)
+    ]
+
+if len(selected_sectors) > 0:
+
+    filtered_df = filtered_df[
+        filtered_df["sector"]
+        .isin(selected_sectors)
+    ]
+
+# =========================================================
+# UNIVERSE METRICS
+# =========================================================
+
+st.sidebar.markdown("---")
+
+st.sidebar.metric(
+    "Loaded Stocks",
+    len(df)
+)
+
+st.sidebar.metric(
+    "Filtered Stocks",
+    len(filtered_df)
+)
+
+# =========================================================
+# EMPTY DATA FIX
+# =========================================================
+
+if filtered_df.empty:
+
+    st.warning(
+        "No stocks match filters. Reduce score or clear filters."
+    )
+
+    st.stop()
+
+# =========================================================
+# LIVE MARKET OVERVIEW
+# =========================================================
+
+st.subheader("📡 Live Market Overview")
+
+indices = {
+
+    "NIFTY 50": "^NSEI",
+    "BANK NIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN"
+}
+
+market_cols = st.columns(3)
+
+for i, (name, ticker) in enumerate(indices.items()):
+
+    try:
+
+        live = yf.Ticker(ticker)
+
+        hist = live.history(period="2d")
+
+        latest_close = round(hist["Close"].iloc[-1], 2)
+
+        prev_close = round(hist["Close"].iloc[-2], 2)
+
+        change = latest_close - prev_close
+
+        pct = round((change / prev_close) * 100, 2)
+
+        market_cols[i].metric(
+
+            label=name,
+
+            value=f"{latest_close}",
+
+            delta=f"{pct}%"
+        )
+
+    except:
+
+        market_cols[i].metric(
+
+            label=name,
+
+            value="N/A",
+
+            delta="N/A"
+        )
 
 st.markdown("---")
 
 # =========================================================
-# LIVE MARKET DASHBOARD
+# KPI ROW
 # =========================================================
 
-st.subheader("📡 Live Market Overview")
+k1, k2, k3, k4, k5 = st.columns(5)
+
+k1.metric(
+    "Market Regime",
+    regime.get("regime", "N/A")
+)
+
+k2.metric(
+    "Stocks",
+    len(filtered_df)
+)
+
+k3.metric(
+    "Avg Score",
+    round(filtered_df["institutional_score"].mean(), 2)
+)
+
+k4.metric(
+    "Top Score",
+    round(filtered_df["institutional_score"].max(), 2)
+)
+
+k5.metric(
+    "Avg Momentum",
+    round(filtered_df["momentum_20"].mean(), 2)
+)
+
+st.markdown("---")
 
 # =========================================================
 # MARKET BREADTH
@@ -253,11 +430,13 @@ neutral = len(
 )
 
 breadth_df = pd.DataFrame({
+
     "Category": [
         "Advancers",
         "Decliners",
         "Neutral"
     ],
+
     "Count": [
         advancers,
         decliners,
@@ -266,24 +445,31 @@ breadth_df = pd.DataFrame({
 })
 
 breadth_fig = px.pie(
+
     breadth_df,
+
     names="Category",
+
     values="Count",
+
     hole=0.55,
-    title="Market Breadth"
+
+    template="plotly_dark"
 )
 
 st.plotly_chart(
     breadth_fig,
     use_container_width=True
 )
+
 # =========================================================
-# LIVE HEATMAP
+# HEATMAP
 # =========================================================
 
 st.subheader("🔥 Institutional Heatmap")
 
 heatmap_df = (
+
     filtered_df
     .sort_values(
         "institutional_score",
@@ -293,602 +479,110 @@ heatmap_df = (
 )
 
 heatmap_fig = px.treemap(
+
     heatmap_df,
+
     path=["sector", "symbol"],
+
     values="institutional_score",
+
     color="institutional_score",
-    hover_data=[
-        "signal",
-        "momentum_20"
-    ],
-    title="Top Institutional Opportunities"
+
+    template="plotly_dark"
 )
 
 st.plotly_chart(
     heatmap_fig,
     use_container_width=True
 )
-# =========================================================
-# MOMENTUM LEADERS
-# =========================================================
-
-st.subheader("🚀 Momentum Leaders")
-
-leaders = (
-    filtered_df
-    .sort_values(
-        "momentum_20",
-        ascending=False
-    )
-    .head(15)
-)
-
-st.dataframe(
-    leaders[
-        [
-            "symbol",
-            "sector",
-            "institutional_score",
-            "momentum_20",
-            "signal"
-        ]
-    ],
-    use_container_width=True
-)
-
-# NIFTY / BANKNIFTY / SENSEX
-indices = {
-    "NIFTY 50": "^NSEI",
-    "BANK NIFTY": "^NSEBANK",
-    "SENSEX": "^BSESN"
-}
-
-market_cols = st.columns(3)
-
-for i, (name, ticker) in enumerate(indices.items()):
-
-    try:
-
-        live = yf.Ticker(ticker)
-
-        hist = live.history(period="2d")
-
-        latest_close = round(hist["Close"].iloc[-1], 2)
-        prev_close = round(hist["Close"].iloc[-2], 2)
-
-        change = latest_close - prev_close
-        pct = round((change / prev_close) * 100, 2)
-
-        market_cols[i].metric(
-            label=name,
-            value=f"{latest_close}",
-            delta=f"{pct}%"
-        )
-
-    except:
-
-        market_cols[i].metric(
-            label=name,
-            value="N/A",
-            delta="N/A"
-        )
-
-st.markdown("---")
-# =========================================================
-# SIDEBAR FILTERS
-# =========================================================
-
-st.sidebar.title(
-    "⚙ Institutional Controls"
-)
 
 # =========================================================
-# SCORE FILTER
+# MOMENTUM SCATTER
 # =========================================================
 
-min_score = st.sidebar.slider(
-    "Minimum Institutional Score",
-    min_value=0,
-    max_value=100,
-    value=20
-)
+st.subheader("⚡ Momentum Analytics")
 
-# =========================================================
-# SIGNAL FILTER
-# =========================================================
-
-signal_options = sorted(
-    [
-        str(x)
-        for x in df["signal"]
-        .dropna()
-        .unique()
-    ]
-)
-
-selected_signals = st.sidebar.multiselect(
-    "Signal Filter",
-    options=signal_options,
-    default=[]
-)
-
-# =========================================================
-# SECTOR FILTER
-# =========================================================
-
-if "sector" not in df.columns:
-
-    df["sector"] = "Unknown"
-
-df["sector"] = (
-
-    df["sector"]
-
-    .fillna("Unknown")
-
-    .astype(str)
-)
-
-sector_options = sorted(
-    df["sector"].unique()
-)
-
-selected_sectors = st.sidebar.multiselect(
-    "Sector Filter",
-    options=sector_options,
-    default=[]
-)
-
-# =========================================================
-# APPLY FILTERS
-# =========================================================
-
-filtered_df = df.copy()
-
-# Score Filter
-filtered_df = filtered_df[
-    filtered_df["institutional_score"]
-    >= min_score
-]
-
-# Signal Filter
-if len(selected_signals) > 0:
-
-    filtered_df = filtered_df[
-        filtered_df["signal"]
-        .isin(selected_signals)
-    ]
-
-# Sector Filter
-if len(selected_sectors) > 0:
-
-    filtered_df = filtered_df[
-        filtered_df["sector"]
-        .isin(selected_sectors)
-    ]
-
-# =========================================================
-# EMPTY DATA FIX
-# =========================================================
-
-if filtered_df.empty:
-
-    st.warning(
-        "No stocks match filters. Reduce score or clear filters."
-    )
-
-    st.stop()
-
-# =========================================================
-# KPI ROW
-# =========================================================
-
-col1, col2, col3, col4, col5 = st.columns(5)
-
-col1.metric(
-
-    "Market Regime",
-
-    regime.get("regime", "N/A")
-)
-
-col2.metric(
-
-    "Stocks",
-
-    len(filtered_df)
-)
-
-col3.metric(
-
-    "Avg Score",
-
-    round(
-
-        filtered_df["institutional_score"].mean(),
-
-        2
-    )
-)
-
-col4.metric(
-
-    "Top Score",
-
-    round(
-
-        filtered_df["institutional_score"].max(),
-
-        2
-    )
-)
-
-col5.metric(
-
-    "Avg Momentum",
-
-    round(
-
-        filtered_df["momentum_20"].mean(),
-
-        2
-    )
-)
-
-st.markdown("---")
-
-# =========================================================
-# STOCK UNIVERSE OVERVIEW
-# =========================================================
-
-st.subheader("🌐 Loaded Stock Universe")
-
-u1, u2, u3, u4 = st.columns(4)
-
-u1.metric(
-    "Total Loaded Stocks",
-    len(df)
-)
-
-u2.metric(
-    "Filtered Stocks",
-    len(filtered_df)
-)
-
-u3.metric(
-    "Sector Coverage",
-    df["sector"].nunique()
-)
-
-u4.metric(
-    "Signal Types",
-    df["signal"].nunique()
-)
-
-# =========================================================
-# TOP SECTORS
-# =========================================================
-
-sector_counts = (
-
-    filtered_df["sector"]
-
-    .value_counts()
-
-    .reset_index()
-)
-
-sector_counts.columns = [
-
-    "sector",
-
-    "stocks"
-]
-
-left, right = st.columns(2)
-
-with left:
-
-    sector_bar = px.bar(
-
-        sector_counts.head(15),
-
-        x="sector",
-
-        y="stocks",
-
-        color="stocks",
-
-        title="Top Sector Participation",
-
-        template="plotly_dark"
-    )
-
-    sector_bar.update_layout(
-
-        height=450,
-
-        xaxis_title="Sector",
-
-        yaxis_title="Stocks"
-    )
-
-    st.plotly_chart(
-
-        sector_bar,
-
-        use_container_width=True
-    )
-
-with right:
-
-    signal_pie = px.pie(
-
-        filtered_df,
-
-        names="signal",
-
-        title="Institutional Breadth",
-
-        template="plotly_dark"
-    )
-
-    signal_pie.update_layout(
-        height=450
-    )
-
-    st.plotly_chart(
-
-        signal_pie,
-
-        use_container_width=True
-    )
-
-st.markdown("---")
-
-# =========================================================
-# TOP LEADERS
-# =========================================================
-
-left, right = st.columns([2, 1])
-
-with left:
-
-    st.subheader("🏆 Institutional Leaders")
-
-    top_df = (
-
-        filtered_df
-
-        .sort_values(
-
-            "institutional_score",
-
-            ascending=False
-        )
-
-        .head(20)
-    )
-
-    fig = px.bar(
-
-        top_df,
-
-        x="symbol",
-
-        y="institutional_score",
-
-        color="institutional_score",
-
-        hover_data=["signal", "sector"],
-
-        template="plotly_dark"
-    )
-
-    fig.update_layout(height=500)
-
-    st.plotly_chart(
-
-        fig,
-
-        use_container_width=True
-    )
-
-with right:
-
-    st.subheader("📊 Signal Breakdown")
-
-    pie = px.pie(
-
-        filtered_df,
-
-        names="signal",
-
-        template="plotly_dark"
-    )
-
-    pie.update_layout(height=500)
-
-    st.plotly_chart(
-
-        pie,
-
-        use_container_width=True
-    )
-
-# =========================================================
-# SECTOR ANALYTICS
-# =========================================================
-
-st.subheader("🏭 Sector Analytics")
-
-sector_df = (
-
-    filtered_df
-
-    .groupby("sector")
-
-    .agg({
-
-        "institutional_score": "mean",
-
-        "momentum_20": "mean",
-
-        "volatility": "mean",
-
-        "symbol": "count"
-    })
-
-    .reset_index()
-)
-
-sector_df.columns = [
-
-    "sector",
-
-    "avg_score",
-
-    "avg_momentum",
-
-    "avg_volatility",
-
-    "stocks"
-]
-
-sector_chart = px.treemap(
-
-    sector_df,
-
-    path=["sector"],
-
-    values="stocks",
-
-    color="avg_score",
-
-    template="plotly_dark"
-)
-
-sector_chart.update_layout(height=600)
-
-st.plotly_chart(
-
-    sector_chart,
-
-    use_container_width=True
-)
-
-# =========================================================
-# MOMENTUM ANALYTICS
-# =========================================================
-
-left, right = st.columns(2)
-
-with left:
-
-    st.subheader("⚡ Momentum vs Score")
-
-    scatter = px.scatter(
-
-        filtered_df,
-
-        x="momentum_20",
-
-        y="institutional_score",
-
-        size="adx",
-
-        color="signal",
-
-        hover_data=["symbol", "sector"],
-
-        template="plotly_dark"
-    )
-
-    scatter.update_layout(height=600)
-
-    st.plotly_chart(
-
-        scatter,
-
-        use_container_width=True
-    )
-
-with right:
-
-    st.subheader("📈 RSI Heatmap")
-
-    heat = px.density_heatmap(
-
-        filtered_df,
-
-        x="rsi",
-
-        y="institutional_score",
-
-        template="plotly_dark"
-    )
-
-    heat.update_layout(height=600)
-
-    st.plotly_chart(
-
-        heat,
-
-        use_container_width=True
-    )
-
-# =========================================================
-# VOLATILITY ANALYTICS
-# =========================================================
-
-st.subheader("🌪 Volatility Analytics")
-
-vol_chart = px.box(
+scatter = px.scatter(
 
     filtered_df,
 
-    x="signal",
+    x="momentum_20",
 
-    y="volatility",
+    y="institutional_score",
+
+    size="adx",
 
     color="signal",
+
+    hover_data=["symbol", "sector"],
 
     template="plotly_dark"
 )
 
-vol_chart.update_layout(height=500)
+scatter.update_layout(height=700)
 
 st.plotly_chart(
-
-    vol_chart,
-
+    scatter,
     use_container_width=True
 )
 
 # =========================================================
-# TABLE
+# TOP STOCKS
 # =========================================================
 
-st.subheader("📋 Institutional Stock Screener")
+st.subheader("🏆 Institutional Leaders")
+
+top_df = (
+
+    filtered_df
+
+    .sort_values(
+        "institutional_score",
+        ascending=False
+    )
+
+    .head(25)
+)
+
+leader_fig = px.bar(
+
+    top_df,
+
+    x="symbol",
+
+    y="institutional_score",
+
+    color="institutional_score",
+
+    hover_data=["signal", "sector"],
+
+    template="plotly_dark"
+)
+
+leader_fig.update_layout(height=600)
+
+st.plotly_chart(
+    leader_fig,
+    use_container_width=True
+)
+
+# =========================================================
+# DATA TABLE
+# =========================================================
+
+st.subheader("📋 Institutional Screener")
 
 display_cols = [
 
     c for c in [
 
         "symbol",
-
         "sector",
-
         "institutional_score",
-
         "signal",
-
         "momentum_20",
-
         "rsi",
-
         "adx",
-
         "volatility"
 
     ]
@@ -896,23 +590,21 @@ display_cols = [
     if c in filtered_df.columns
 ]
 
-styled_df = (
+table_df = (
 
     filtered_df
 
     [display_cols]
 
     .sort_values(
-
         "institutional_score",
-
         ascending=False
     )
 )
 
 st.dataframe(
 
-    styled_df,
+    table_df,
 
     use_container_width=True,
 
@@ -923,7 +615,7 @@ st.dataframe(
 # DOWNLOAD
 # =========================================================
 
-csv = styled_df.to_csv(index=False)
+csv = table_df.to_csv(index=False)
 
 st.download_button(
 
