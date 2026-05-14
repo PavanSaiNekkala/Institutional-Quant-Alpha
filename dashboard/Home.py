@@ -2,6 +2,7 @@ import yfinance as yf
 from datetime import datetime
 import sys
 from pathlib import Path
+import time
 
 # =========================================================
 # ROOT PATH FIX
@@ -22,14 +23,6 @@ import numpy as np
 
 import plotly.express as px
 import plotly.graph_objects as go
-
-from streamlit_autorefresh import st_autorefresh
-
-# =========================================================
-# AUTO REFRESH
-# =========================================================
-
-st_autorefresh(interval=60000, key="marketrefresh")
 
 # =========================================================
 # SAFE IMPORT
@@ -63,6 +56,12 @@ st.set_page_config(
 
     layout="wide"
 )
+
+# =========================================================
+# AUTO REFRESH
+# =========================================================
+
+st.sidebar.caption("🔄 Auto Refresh Every 60 Seconds")
 
 # =========================================================
 # CUSTOM CSS
@@ -192,12 +191,6 @@ df["relative_strength_rank"] = (
     df["momentum_20"]
     .rank(pct=True)
     * 100
-)
-
-df["institutional_rank"] = (
-
-    df["institutional_score"]
-    .rank(ascending=False)
 )
 
 df["risk_score"] = (
@@ -334,8 +327,16 @@ if len(selected_sectors) > 0:
         .isin(selected_sectors)
     ]
 
+if len(watchlist) > 0:
+
+    filtered_df = filtered_df[
+        filtered_df["symbol"]
+        .astype(str)
+        .isin(watchlist)
+    ]
+
 # =========================================================
-# EMPTY DATA
+# EMPTY FILTER
 # =========================================================
 
 if filtered_df.empty:
@@ -455,46 +456,15 @@ st.markdown("---")
 
 st.subheader("📈 Market Breadth")
 
-advancers = len(
-    filtered_df[
-        filtered_df["signal"]
-        .isin(["BUY", "STRONG BUY"])
-    ]
-)
+breadth = filtered_df["signal"].value_counts().reset_index()
 
-decliners = len(
-    filtered_df[
-        filtered_df["signal"]
-        .isin(["SELL", "STRONG SELL"])
-    ]
-)
-
-neutral = len(
-    filtered_df[
-        filtered_df["signal"] == "HOLD"
-    ]
-)
-
-breadth_df = pd.DataFrame({
-
-    "Category": [
-        "Advancers",
-        "Decliners",
-        "Neutral"
-    ],
-
-    "Count": [
-        advancers,
-        decliners,
-        neutral
-    ]
-})
+breadth.columns = ["Signal", "Count"]
 
 breadth_fig = px.pie(
 
-    breadth_df,
+    breadth,
 
-    names="Category",
+    names="Signal",
 
     values="Count",
 
@@ -505,45 +475,6 @@ breadth_fig = px.pie(
 
 st.plotly_chart(
     breadth_fig,
-    use_container_width=True
-)
-
-# =========================================================
-# SECTOR ROTATION
-# =========================================================
-
-st.subheader("🔄 Sector Rotation")
-
-sector_rotation = (
-
-    filtered_df
-    .groupby("sector")
-    .agg({
-
-        "momentum_20": "mean",
-        "institutional_score": "mean"
-
-    })
-    .reset_index()
-)
-
-sector_fig = px.scatter(
-
-    sector_rotation,
-
-    x="momentum_20",
-
-    y="institutional_score",
-
-    size="institutional_score",
-
-    color="sector",
-
-    template="plotly_dark"
-)
-
-st.plotly_chart(
-    sector_fig,
     use_container_width=True
 )
 
@@ -612,44 +543,6 @@ st.plotly_chart(
 )
 
 # =========================================================
-# TOP STOCKS
-# =========================================================
-
-st.subheader("🏆 Institutional Leaders")
-
-top_df = (
-
-    filtered_df
-    .sort_values(
-        "institutional_score",
-        ascending=False
-    )
-    .head(25)
-)
-
-leader_fig = px.bar(
-
-    top_df,
-
-    x="symbol",
-
-    y="institutional_score",
-
-    color="institutional_score",
-
-    hover_data=["signal", "sector"],
-
-    template="plotly_dark"
-)
-
-leader_fig.update_layout(height=600)
-
-st.plotly_chart(
-    leader_fig,
-    use_container_width=True
-)
-
-# =========================================================
 # STOCK ANALYSIS
 # =========================================================
 
@@ -704,7 +597,7 @@ except:
     st.warning("Chart unavailable")
 
 # =========================================================
-# DATA TABLE
+# TABLE
 # =========================================================
 
 st.subheader("📋 Institutional Screener")
