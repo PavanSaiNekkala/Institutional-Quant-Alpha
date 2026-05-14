@@ -83,12 +83,6 @@ def compute_factor_scores(df):
 
     results = []
 
-    if df.empty:
-
-        print("Factor scoring skipped -> empty dataframe")
-
-        return pd.DataFrame()
-
     symbols = df["symbol"].unique()
 
     print(f"Scoring {len(symbols)} symbols")
@@ -103,10 +97,7 @@ def compute_factor_scores(df):
                 .reset_index(drop=True)
             )
 
-            if len(sdf) < 200:
-
-                print(f"{symbol} skipped -> insufficient history")
-
+            if len(sdf) < 50:
                 continue
 
             latest = sdf.iloc[-1]
@@ -115,19 +106,12 @@ def compute_factor_scores(df):
             # FACTOR EXTRACTION
             # =================================================
 
-            momentum_score = safe_value(
-                latest.get("momentum_20")
-            )
+            momentum_score = latest["momentum_20"]
 
-            rsi_score = safe_value(
-                latest.get("rsi")
-            )
+            rsi_score = latest["rsi"]
 
             volatility_score = (
-                100 -
-                safe_value(
-                    latest.get("volatility")
-                ) * 100
+                100 - latest["volatility"] * 100
             )
 
             trend_score = (
@@ -380,12 +364,6 @@ def run_pipeline():
 
         update_market_data()
 
-    except Exception as e:
-
-        print(f"MARKET DATA ERROR -> {e}")
-
-        return
-
     # =====================================================
     # STEP 2 — LOAD DATA
     # =====================================================
@@ -395,12 +373,6 @@ def run_pipeline():
         df = load_parquet(
             "market_data.parquet"
         )
-
-    except Exception as e:
-
-        print(f"LOAD ERROR -> {e}")
-
-        return
 
     if df.empty:
 
@@ -430,18 +402,7 @@ def run_pipeline():
                 .reset_index(drop=True)
             )
 
-            sdf.columns = [
-                str(c).lower()
-                for c in sdf.columns
-            ]
-
-            if "close" not in sdf.columns:
-
-                print(f"{symbol} skipped -> close missing")
-
-                continue
-
-            sdf = indicators.add_indicators(sdf)
+            sdf = add_indicators(sdf)
 
             indicator_results.append(sdf)
 
@@ -449,7 +410,16 @@ def run_pipeline():
 
         except Exception as e:
 
-            print(f"{symbol} indicator error -> {e}")
+            print(f"{symbol} INDICATOR ERROR -> {e}")
+
+    # =====================================================
+    # SAFETY CHECK
+    # =====================================================
+
+    if len(indicator_results) == 0:
+
+        print("No indicator results generated")
+        return
 
     # =====================================================
     # VALIDATION
@@ -465,6 +435,13 @@ def run_pipeline():
         indicator_results,
         ignore_index=True
     )
+
+    if final_df.empty:
+
+        print("Final dataframe empty")
+        return
+
+    print(f"Final rows -> {len(final_df)}")
 
     if final_df.empty:
 
@@ -500,15 +477,15 @@ def run_pipeline():
     if factor_df.empty:
 
         print("Factor dataframe empty")
-
         return
+
+    print(f"Factor rows -> {len(factor_df)}")
 
     # =====================================================
     # STEP 6 — SAVE FACTORS
     # =====================================================
 
     try:
-
         save_parquet(
             factor_df,
             "factor_scores.parquet"
@@ -517,12 +494,7 @@ def run_pipeline():
         print("Factor scores saved")
 
     except Exception as e:
-
         print(f"FACTOR SAVE ERROR -> {e}")
-
-    # =====================================================
-    # COMPLETED
-    # =====================================================
 
     print("=" * 60)
     print("PIPELINE COMPLETED SUCCESSFULLY")
