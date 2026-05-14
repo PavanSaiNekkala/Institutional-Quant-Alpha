@@ -1,7 +1,14 @@
 name: Institutional Quant Pipeline
 
 on:
+
   workflow_dispatch:
+
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: write
 
 jobs:
 
@@ -9,37 +16,83 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 360
+
     steps:
+
+      # =====================================================
+      # CHECKOUT
+      # =====================================================
 
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      # =====================================================
+      # PYTHON
+      # =====================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # =====================================================
+      # INSTALL DEPENDENCIES
+      # =====================================================
+
       - name: Install Dependencies
         run: |
+
           python -m pip install --upgrade pip
+
           pip install pandas
           pip install numpy
           pip install yfinance
           pip install pyarrow
           pip install fastparquet
-          pip install streamlit
-          pip install plotly
-          pip install scipy
-          pip install scikit-learn
           pip install ta
-          pip install -r requirements.txt
 
-      - name: Verify Libraries
-        run: |
-          python -c "import pandas"
-          python -c "import numpy"
-          python -c "import yfinance"
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      # =====================================================
+      # RUN PIPELINE
+      # =====================================================
 
       - name: Run Institutional Pipeline
         run: |
+
           python -m pipelines.daily_pipeline
+
+      # =====================================================
+      # VERIFY FILES
+      # =====================================================
+
+      - name: Verify Generated Files
+        run: |
+
+          ls -R data
+
+      # =====================================================
+      # COMMIT CHANGES
+      # =====================================================
+
+      - name: Commit Updated Files
+        run: |
+
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add .
+
+          git diff --quiet && git diff --staged --quiet || git commit -m "Automated institutional pipeline update"
+
+      # =====================================================
+      # PUSH CHANGES
+      # =====================================================
+
+      - name: Push Changes
+        run: |
+
+          git push
