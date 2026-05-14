@@ -2,342 +2,264 @@
 # INSTITUTIONAL DAILY PIPELINE
 # =========================================================
 
-import warnings
-warnings.filterwarnings("ignore")
-
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import traceback
+
+from core.market_data import load_parquet
+from core.indicators import add_indicators
+from core.institutional_score import generate_scores
+from core.market_regime import detect_market_regime
+from strategy.trade_decision_engine import trade_decision
 
 # =========================================================
-# INTERNAL IMPORTS
-# =========================================================
-
-from core.market_data import (
-    update_market_data,
-    load_parquet
-)
-
-from core.indicators import (
-    add_indicators
-)
-
-# =========================================================
-# BASE PATHS
+# PATHS
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-PARQUET_DIR = (
-    BASE_DIR
-    / "data"
-    / "parquet"
-)
+PARQUET_DIR = BASE_DIR / "data" / "parquet"
+OUTPUT_DIR = BASE_DIR / "data" / "processed"
 
-PARQUET_DIR.mkdir(
-    parents=True,
-    exist_ok=True
-)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # =========================================================
-# MEMORY OPTIMIZATION
+# LOAD MARKET DATA
 # =========================================================
 
-def optimize_dataframe(df):
+def load_market_data():
 
-    df = df.copy()
+    path = PARQUET_DIR / "market_data.parquet"
 
-    float_cols = df.select_dtypes(
-        include=["float64"]
-    ).columns
+    if not path.exists():
 
-    int_cols = df.select_dtypes(
-        include=["int64"]
-    ).columns
+        print("market_data.parquet not found")
 
-    for col in float_cols:
-        df[col] = pd.to_numeric(
-            df[col],
-            downcast="float"
-        )
+        return pd.DataFrame()
 
-    for col in int_cols:
-        df[col] = pd.to_numeric(
-            df[col],
-            downcast="integer"
-        )
-
-    return df
+    return pd.read_parquet(path)
 
 # =========================================================
-# CLEAN DATA
+# PROCESS STOCK
 # =========================================================
 
-def clean_market_data(df):
-
-    df = df.copy()
-
-    # remove duplicates
-    df = df.drop_duplicates()
-
-    # sort
-    if "symbol" in df.columns and "date" in df.columns:
-
-        df = df.sort_values(
-            by=["symbol", "date"]
-        )
-
-    # remove invalid close
-    if "close" in df.columns:
-
-        df = df[
-            df["close"] > 0
-        ]
-
-    return df
-
-# =========================================================
-# PROCESS SINGLE STOCK
-# =========================================================
-
-def process_single_stock(symbol, market_df):
+def process_stock(symbol_df):
 
     try:
 
-        temp = market_df[
-            market_df["symbol"] == symbol
-        ].copy()
+        symbol_df = symbol_df.copy()
 
-        if temp.empty:
-            return None
+        symbol_df.sort_values(
+            "date",
+            inplace=True
+        )
 
-        # sort by date
-        if "date" in temp.columns:
-            temp = temp.sort_values("date")
+        # =========================================
+        # INDICATORS
+        # =========================================
 
-        # add indicators
-        temp = add_indicators(temp)
+        symbol_df = add_indicators(symbol_df)
 
-        # latest row only
-        latest = temp.iloc[-1:].copy()
+        # =========================================
+        # INSTITUTIONAL SCORES
+        # =========================================
 
-        return latest
+        scores = generate_scores(symbol_df)
+
+        for key, value in scores.items():
+
+            symbol_df[key] = value
+
+        # =========================================
+        # SMART MONEY SIGNAL
+        # =========================================
+
+        symbol_df["smart_money_signal"] = np.where(
+
+            (
+                (symbol_df["institutional_score"] > 60)
+                &
+                (symbol_df["smart_money_score"] > 50)
+            ),
+
+            "ACCUMULATION",
+
+            "NORMAL"
+        )
+
+        # =========================================
+        # MARKET REGIME
+        # =========================================
+
+        regime = detect_market_regime(symbol_df)
+
+        symbol_df["market_regime"] = regime
+
+        # =========================================
+        # TRADE DECISION
+        # =========================================
+
+        symbol_df["trade_decision"] = (
+
+            symbol_df.apply(
+                trade_decision,
+                axis=1
+            )
+        )
+
+        return symbol_df
 
     except Exception as e:
 
-        print(f"PROCESS ERROR -> {symbol} -> {e}")
+        print(f"PROCESS ERROR -> {e}")
 
-        return None
+        traceback.print_exc()
+
+        return pd.DataFrame()
 
 # =========================================================
-# BUILD FINAL DATASET
+# RUN PIPELINE
 # =========================================================
 
-def build_final_dataset(market_df):
+def run_pipeline():
 
-    print("\nBuilding institutional dataset...")
+    print("=" * 60)
+    print("RUNNING INSTITUTIONAL PIPELINE")
+    print("=" * 60)
 
-    symbols = market_df["symbol"].unique()
+    df = load_market_data()
+
+    if df.empty:
+
+        print("No market data available")
+
+        return
+
+    print(f"Loaded rows: {len(df)}")
 
     processed = []
 
-    total = len(symbols)
+    symbols = df["symbol"].unique()
 
-    for idx, symbol in enumerate(symbols, start=1):
+    print(f"Total symbols: {len(symbols)}")
 
-        print(f"[{idx}/{total}] Processing -> {symbol}")
+    for symbol in symbols:
 
-        result = process_single_stock(
-            symbol,
-            market_df
-        )
+        try:
 
-        if result is not None:
-            processed.append(result)
+            print(f"Processing -> {symbol}")
 
-    if not processed:
+            stock_df = df[
+                df["symbol"] == symbol
+            ].copy()
 
-        print("No processed stocks available")
+            result = process_stock(stock_df)
 
-        return pd.DataFrame()
+            if not result.empty:
+
+                processed.append(result)
+
+        except Exception as e:
+
+            print(f"FAILED -> {symbol}")
+
+            print(e)
+
+    if len(processed) == 0:
+
+        print("No processed stocks")
+
+        return
+
+    # =========================================
+    # FINAL DATAFRAME
+    # =========================================
 
     final_df = pd.concat(
         processed,
         ignore_index=True
     )
 
-    # clean
-    final_df = clean_market_data(final_df)
+    output_columns = [
 
-    # optimize memory
-    final_df = optimize_dataframe(final_df)
+        "date",
+        "symbol",
 
-    return final_df
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
 
-# =========================================================
-# SAVE OUTPUTS
-# =========================================================
+        "ema20",
+        "ema50",
+        "ema200",
 
-def save_outputs(final_df):
+        "rsi",
+        "atr",
+        "volatility",
+        "momentum_20",
 
-    parquet_path = (
-        PARQUET_DIR
-        / "institutional_dataset.parquet"
+        "institutional_score",
+        "smart_money_score",
+
+        "relative_strength",
+        "volume_score",
+        "momentum_score",
+        "trend_score",
+        "volatility_score",
+        "accumulation_score",
+        "breakout_score",
+        "price_structure_score",
+        "risk_reward_score",
+        "liquidity_score",
+
+        "smart_money_signal",
+        "market_regime",
+        "trade_decision"
+    ]
+
+    final_df = final_df[
+        [c for c in output_columns if c in final_df.columns]
+    ]
+
+    # =========================================
+    # SAVE OUTPUT
+    # =========================================
+
+    output_path = (
+        OUTPUT_DIR /
+        "institutional_pipeline_output.parquet"
     )
 
-    csv_path = (
-        PARQUET_DIR
-        / "institutional_dataset.csv"
+    csv_output = (
+        OUTPUT_DIR /
+        "institutional_pipeline_output.csv"
     )
 
-    # parquet
     final_df.to_parquet(
-        parquet_path,
+        output_path,
         index=False
     )
 
-    # csv
     final_df.to_csv(
-        csv_path,
+        csv_output,
         index=False
     )
 
-    print(f"\nSaved Parquet -> {parquet_path}")
-    print(f"Saved CSV -> {csv_path}")
-
-# =========================================================
-# DISPLAY SUMMARY
-# =========================================================
-
-def display_summary(final_df):
-
-    print("\n" + "=" * 60)
-    print("PIPELINE SUMMARY")
+    print("=" * 60)
+    print("PIPELINE COMPLETED")
     print("=" * 60)
 
-    print(f"Total Stocks     : {final_df['symbol'].nunique()}")
+    print(f"Rows: {len(final_df)}")
 
-    print(f"Total Rows       : {len(final_df):,}")
-
-    if "close" in final_df.columns:
-
-        print(
-            f"Average Price    : "
-            f"{round(final_df['close'].mean(), 2)}"
-        )
-
-    if "rsi" in final_df.columns:
-
-        print(
-            f"Average RSI      : "
-            f"{round(final_df['rsi'].mean(), 2)}"
-        )
-
-    if "momentum_20" in final_df.columns:
-
-        print(
-            f"Average Momentum : "
-            f"{round(final_df['momentum_20'].mean(), 2)}"
-        )
-
-    print("=" * 60)
+    print(f"Saved -> {output_path}")
 
 # =========================================================
-# MAIN PIPELINE
-# =========================================================
-
-def main():
-
-    try:
-
-        print("=" * 60)
-        print("STARTING INSTITUTIONAL PIPELINE")
-        print("=" * 60)
-
-        # =================================================
-        # STEP 1 -> DOWNLOAD MARKET DATA
-        # =================================================
-
-        print("\nSTEP 1 -> Updating Market Data")
-
-        update_market_data()
-
-        # =================================================
-        # STEP 2 -> LOAD MARKET DATA
-        # =================================================
-
-        print("\nSTEP 2 -> Loading Market Data")
-
-        market_df = load_parquet(
-            "market_data.parquet"
-        )
-
-        if market_df.empty:
-
-            print("Market data is empty")
-
-            return
-
-        print(
-            f"Loaded rows -> "
-            f"{len(market_df):,}"
-        )
-
-        # =================================================
-        # STEP 3 -> CLEAN
-        # =================================================
-
-        print("\nSTEP 3 -> Cleaning Market Data")
-
-        market_df = clean_market_data(
-            market_df
-        )
-
-        market_df = optimize_dataframe(
-            market_df
-        )
-
-        # =================================================
-        # STEP 4 -> BUILD DATASET
-        # =================================================
-
-        print("\nSTEP 4 -> Calculating Indicators")
-
-        final_df = build_final_dataset(
-            market_df
-        )
-
-        if final_df.empty:
-
-            print("Final dataset empty")
-
-            return
-
-        # =================================================
-        # STEP 5 -> SAVE
-        # =================================================
-
-        print("\nSTEP 5 -> Saving Outputs")
-
-        save_outputs(final_df)
-
-        # =================================================
-        # STEP 6 -> SUMMARY
-        # =================================================
-
-        display_summary(final_df)
-
-        print("\nPIPELINE COMPLETED SUCCESSFULLY")
-
-    except Exception as e:
-
-        print("\nPIPELINE FAILED")
-        print(str(e))
-
-# =========================================================
-# RUN
+# MAIN
 # =========================================================
 
 if __name__ == "__main__":
 
-    main()
+    run_pipeline()
