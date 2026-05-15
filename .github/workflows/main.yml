@@ -66,10 +66,6 @@ jobs:
           echo "Current Working Directory:"
           pwd
 
-          echo ""
-          echo "Repository Files:"
-          ls -R
-
       # =====================================================
       # INSTALL DEPENDENCIES
       # =====================================================
@@ -143,50 +139,8 @@ jobs:
             echo "Creating default trade_decision_engine.py"
 
             printf '%s\n' \
-            '# =========================================================' \
-            '# TRADE DECISION ENGINE' \
-            '# =========================================================' \
-            '' \
             'def trade_decision(row):' \
-            '' \
-            '    try:' \
-            '' \
-            '        institutional_score = row.get(' \
-            '            "institutional_score",' \
-            '            0' \
-            '        )' \
-            '' \
-            '        smart_money_score = row.get(' \
-            '            "smart_money_score",' \
-            '            0' \
-            '        )' \
-            '' \
-            '        breakout_score = row.get(' \
-            '            "breakout_score",' \
-            '            0' \
-            '        )' \
-            '' \
-            '        if (' \
-            '            institutional_score >= 75' \
-            '            and smart_money_score >= 70' \
-            '            and breakout_score >= 80' \
-            '        ):' \
-            '' \
-            '            return "STRONG_BUY"' \
-            '' \
-            '        elif institutional_score >= 60:' \
-            '' \
-            '            return "BUY"' \
-            '' \
-            '        elif institutional_score <= 30:' \
-            '' \
-            '            return "SELL"' \
-            '' \
-            '        return "HOLD"' \
-            '' \
-            '    except Exception:' \
-            '' \
-            '        return "HOLD"' \
+            '    return "HOLD"' \
             > strategy/trade_decision_engine.py
 
           fi
@@ -234,6 +188,7 @@ jobs:
           path: |
             data/processed/
             data/parquet/
+          retention-days: 7
 
       # =====================================================
       # GIT STATUS
@@ -259,35 +214,51 @@ jobs:
           git add strategy/
 
           git diff --staged --quiet || git commit -m "Auto update institutional datasets"
-            # =====================================================
-      # FAILURE ALERT
-      # =====================================================
-
-      - name: Notify Failure
-        if: failure()
-        run: |
-
-          echo "===================================="
-          echo "PIPELINE FAILED"
-          echo "Repository: ${{ github.repository }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "===================================="
 
       # =====================================================
-      # SUCCESS ALERT
+      # TELEGRAM SUCCESS ALERT
       # =====================================================
 
-      - name: Notify Success
+      - name: Telegram Success Alert
         if: success()
+        continue-on-error: true
         run: |
 
-          echo "===================================="
-          echo "PIPELINE COMPLETED SUCCESSFULLY"
-          echo "Repository: ${{ github.repository }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "===================================="
+          curl -s -X POST \
+          "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          -d text="✅ Institutional Pipeline Successful
+
+Repository: ${{ github.repository }}
+
+Branch: ${{ github.ref_name }}
+
+Run ID: ${{ github.run_id }}
+
+Hourly refresh completed successfully."
+
+      # =====================================================
+      # TELEGRAM FAILURE ALERT
+      # =====================================================
+
+      - name: Telegram Failure Alert
+        if: failure()
+        continue-on-error: true
+        run: |
+
+          curl -s -X POST \
+          "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          -d text="❌ Institutional Pipeline FAILED
+
+Repository: ${{ github.repository }}
+
+Branch: ${{ github.ref_name }}
+
+Run ID: ${{ github.run_id }}
+
+Check GitHub Actions logs immediately."
+
       # =====================================================
       # PUSH CHANGES
       # =====================================================
