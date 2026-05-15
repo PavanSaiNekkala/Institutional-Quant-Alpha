@@ -1,0 +1,27 @@
+# strategy/trade_decision_engine.py
+
+import pandas as pd
+import numpy as np
+
+
+class TradeDecisionEngine:
+
+    def __init__(self):
+        pass
+
+    def generate_signal(self, df: pd.DataFrame):
+
+        if df.empty:
+            return "NO_DATA"
+
+        latest_close = df["Close"].iloc[-1]
+
+        sma20 = df["Close"].rolling(20).mean().iloc[-1]
+
+        if latest_close > sma20:
+            return "BUY"
+
+        elif latest_close < sma20:
+            return "SELL"
+
+        return "HOLD"
