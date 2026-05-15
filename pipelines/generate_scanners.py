@@ -95,3 +95,28 @@ volume.to_csv(
 )
 
 print("SCANNERS GENERATED SUCCESSFULLY")
+
+
+import pandas as pd
+from pathlib import Path
+
+# =========================================================
+# CREATE SAMPLE SCANNER OUTPUTS
+# =========================================================
+
+output_dir = Path("data/processed/scanners")
+output_dir.mkdir(parents=True, exist_ok=True)
+
+sample_data = pd.DataFrame({
+    "Symbol": ["RELIANCE", "TCS", "HDFCBANK"],
+    "Price": [2850, 3900, 1650],
+    "Volume": [1200000, 850000, 970000],
+    "Signal": ["BUY", "BUY", "HOLD"]
+})
+
+sample_data.to_csv(
+    output_dir / "institutional_scanner.csv",
+    index=False
+)
+
+print("Scanner file generated successfully")
