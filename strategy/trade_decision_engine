@@ -1,27 +1,52 @@
-# strategy/trade_decision_engine.py
+# =========================================================
+# TRADE DECISION ENGINE
+# =========================================================
 
-import pandas as pd
-import numpy as np
+def trade_decision(row):
 
+    try:
 
-class TradeDecisionEngine:
+        institutional_score = row.get(
+            "institutional_score",
+            0
+        )
 
-    def __init__(self):
-        pass
+        smart_money_score = row.get(
+            "smart_money_score",
+            0
+        )
 
-    def generate_signal(self, df: pd.DataFrame):
+        breakout_score = row.get(
+            "breakout_score",
+            0
+        )
 
-        if df.empty:
-            return "NO_DATA"
+        if (
 
-        latest_close = df["Close"].iloc[-1]
+            institutional_score >= 75
 
-        sma20 = df["Close"].rolling(20).mean().iloc[-1]
+            and
 
-        if latest_close > sma20:
+            smart_money_score >= 70
+
+            and
+
+            breakout_score >= 80
+
+        ):
+
+            return "STRONG_BUY"
+
+        elif institutional_score >= 60:
+
             return "BUY"
 
-        elif latest_close < sma20:
+        elif institutional_score <= 30:
+
             return "SELL"
+
+        return "HOLD"
+
+    except Exception:
 
         return "HOLD"
