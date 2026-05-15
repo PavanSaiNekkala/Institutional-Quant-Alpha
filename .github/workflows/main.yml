@@ -1,0 +1,206 @@
+name: Institutional Pipeline
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: institutional-pipeline
+  cancel-in-progress: false
+
+jobs:
+
+  institutional-pipeline:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+
+      # =====================================================
+      # CHECKOUT REPOSITORY
+      # =====================================================
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # =====================================================
+      # SETUP PYTHON
+      # =====================================================
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      # =====================================================
+      # DISPLAY SYSTEM INFO
+      # =====================================================
+
+      - name: Display Environment Info
+        run: |
+
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+
+          echo ""
+          echo "Python Version:"
+          python --version
+
+          echo ""
+          echo "Working Directory:"
+          pwd
+
+          echo ""
+          echo "Repository Structure:"
+          ls -R
+
+      # =====================================================
+      # INSTALL DEPENDENCIES
+      # =====================================================
+
+      - name: Install Dependencies
+        run: |
+
+          python -m pip install --upgrade pip
+
+          pip install -r requirements.txt
+
+      # =====================================================
+      # VERIFY REQUIRED PYTHON PACKAGES
+      # =====================================================
+
+      - name: Verify Python Packages
+        run: |
+
+          python -c "import pandas; print('PANDAS OK')"
+
+          python -c "import numpy; print('NUMPY OK')"
+
+          python -c "import yfinance; print('YFINANCE OK')"
+
+          python -c "import pyarrow; print('PYARROW OK')"
+
+      # =====================================================
+      # VERIFY PROJECT STRUCTURE
+      # =====================================================
+
+      - name: Verify Project Structure
+        run: |
+
+          echo "Checking required project structure..."
+
+          mkdir -p pipelines
+          mkdir -p strategy
+          mkdir -p data/parquet
+          mkdir -p data/raw
+          mkdir -p data/cache
+
+          touch pipelines/__init__.py
+          touch strategy/__init__.py
+
+          if [ -f pipelines/daily_pipeline.py ]; then
+            echo "daily_pipeline.py OK"
+          else
+            echo "ERROR: pipelines/daily_pipeline.py MISSING"
+            exit 1
+          fi
+
+          if [ -f strategy/trade_decision_engine.py ]; then
+            echo "trade_decision_engine.py OK"
+          else
+
+            echo "Creating default trade_decision_engine.py"
+
+            cat <<EOF > strategy/trade_decision_engine.py
+class TradeDecisionEngine:
+
+    def __init__(self):
+        pass
+
+    def generate_signal(self, data=None):
+        return "HOLD"
+EOF
+
+          fi
+
+      # =====================================================
+      # SET PYTHONPATH
+      # =====================================================
+
+      - name: Set PYTHONPATH
+        run: |
+
+          echo "PYTHONPATH=${{ github.workspace }}" >> $GITHUB_ENV
+
+      # =====================================================
+      # RUN PIPELINE
+      # =====================================================
+
+      - name: Run Institutional Pipeline
+        run: |
+
+          python -m pipelines.daily_pipeline
+
+      # =====================================================
+      # VERIFY GENERATED FILES
+      # =====================================================
+
+      - name: Verify Generated Files
+        run: |
+
+          echo "Generated Files:"
+          find data -type f | sort || true
+
+          echo ""
+          echo "Parquet Files:"
+          ls -lh data/parquet/ || true
+
+      # =====================================================
+      # GIT STATUS
+      # =====================================================
+
+      - name: Git Status
+        run: |
+
+          git status
+
+      # =====================================================
+      # COMMIT GENERATED FILES
+      # =====================================================
+
+      - name: Commit Updated Files
+        run: |
+
+          git config --global user.name "github-actions[bot]"
+
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data/
+          git add strategy/
+
+          git diff --staged --quiet || git commit -m "Auto update institutional datasets"
+
+      # =====================================================
+      # PUSH CHANGES
+      # =====================================================
+
+      - name: Push Changes
+        run: |
+
+          git push origin HEAD:${{ github.ref_name }}
