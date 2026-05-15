@@ -162,6 +162,11 @@ jobs:
         run: |
 
           python -m pipelines.daily_pipeline
+          
+      - name: Generate Stock Scanners
+        run: |
+
+          python pipelines/generate_scanners.py
 
       # =====================================================
       # VERIFY OUTPUT FILES
