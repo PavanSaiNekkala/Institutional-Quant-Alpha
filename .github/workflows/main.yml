@@ -1,7 +1,6 @@
-name: institutional-pipeline
+name: Institutional Pipeline
 
 on:
-
   workflow_dispatch:
 
   schedule:
@@ -9,6 +8,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: institutional-pipeline
+  cancel-in-progress: false
 
 jobs:
 
@@ -26,27 +29,18 @@ jobs:
 
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # =====================================================
-      # PYTHON
+      # PYTHON SETUP
       # =====================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      # =====================================================
-      # CACHE
-      # =====================================================
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          cache: "pip"
 
       # =====================================================
       # INSTALL DEPENDENCIES
@@ -101,7 +95,12 @@ jobs:
       - name: Verify Generated Files
         run: |
 
-          ls -lh data/parquet/
+          echo "Generated Files:"
+          find data -type f | sort
+
+          echo ""
+          echo "Parquet Files:"
+          ls -lh data/parquet/ || true
 
       # =====================================================
       # COMMIT GENERATED FILES
@@ -125,4 +124,4 @@ jobs:
       - name: Push Changes
         run: |
 
-          git push
+          git push origin HEAD:${{ github.ref_name }}
