@@ -259,7 +259,35 @@ jobs:
           git add strategy/
 
           git diff --staged --quiet || git commit -m "Auto update institutional datasets"
+            # =====================================================
+      # FAILURE ALERT
+      # =====================================================
 
+      - name: Notify Failure
+        if: failure()
+        run: |
+
+          echo "===================================="
+          echo "PIPELINE FAILED"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "===================================="
+
+      # =====================================================
+      # SUCCESS ALERT
+      # =====================================================
+
+      - name: Notify Success
+        if: success()
+        run: |
+
+          echo "===================================="
+          echo "PIPELINE COMPLETED SUCCESSFULLY"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "===================================="
       # =====================================================
       # PUSH CHANGES
       # =====================================================
